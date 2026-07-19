@@ -9,7 +9,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEMO="${DEMO_DIR:-/tmp/sessionhub-demo}"
+DEMO="${DEMO_DIR:-/tmp/demo}"
 OUT="$ROOT/docs"
 
 command -v freeze >/dev/null || {

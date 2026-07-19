@@ -7,8 +7,8 @@ Output docs/demo.gif
 Set Shell bash
 Set FontFamily "Menlo"
 Set FontSize 13
-Set Width 1340
-Set Height 590
+Set Width 1180
+Set Height 620
 Set Padding 24
 Set Margin 16
 Set BorderRadius 8
@@ -17,7 +17,7 @@ Set TypingSpeed 45ms
 Set PlaybackSpeed 1
 
 Hide
-Type "export SESSIONHUB_CONFIG_DIR=/tmp/sessionhub-demo/config FORCE_COLOR=1 PS1='❯ '" Enter
+Type "export SESSIONHUB_CONFIG_DIR=/tmp/demo/config FORCE_COLOR=1 PS1='❯ '" Enter
 Type "clear" Enter
 Show
 

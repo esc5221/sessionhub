@@ -4,6 +4,8 @@ Search everything you've ever done with your coding agents.
 
 ![sessionhub searching months of sessions for 'connection pool', then opening one](docs/hero-dark.png)
 
+![the same, as you would run it](docs/demo.gif)
+
 ## Install
 
 ```bash
@@ -181,8 +183,6 @@ sessionhub uninstall --purge     # timer, config and database
 uv tool uninstall sessionhub
 ```
 </details>
-
-![sessionhub in use](docs/demo.gif)
 
 ## Agents
 
