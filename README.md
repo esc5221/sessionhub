@@ -53,8 +53,11 @@ Your agents get the skill during setup — Claude Code and Codex read the same
 one — so you can invoke it right in the agent instead of the shell:
 
 ```
-Claude Code   /sessionhub  find the session where we fixed the pgbouncer timeout
-Codex         $sessionhub  find the session where we fixed the pgbouncer timeout
+# Claude Code
+/sessionhub find the session where we fixed the pgbouncer timeout
+
+# Codex
+$sessionhub find the session where we fixed the pgbouncer timeout
 ```
 
 ## How it works
