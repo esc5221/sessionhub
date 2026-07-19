@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ADR-SH-001 · sessionhub 저장 아키텍처</title>
+
+<style>
+/* ===== LOOK TOKENS : paper ===== */
+:root{
+  --bg:#f3f4f6;
+  --surface:#ffffff;
+  --ink:#16181d;
+  --ink-soft:#3a3e46;
+  --ink-faint:#9aa0a8;
+  --line:#dcdee2;
+  --line-soft:#ebedf0;
+  --accent:#1f5fa8;      --accent-soft:#eaf1f9;
+  --good:#1f6b3a;        --good-soft:#eaf5ee;
+  --warn:#9a5b00;        --warn-soft:#fbf2e3;
+  --bad:#a3301f;         --bad-soft:#fbeeec;
+  --info:#5b4a9a;        --info-soft:#efecf8;
+  --code-bg:#f1f2f4;
+  --code-ink:#2c2f36;
+  --font-body:-apple-system,BlinkMacSystemFont,'Segoe UI','Pretendard',Inter,Roboto,sans-serif;
+  --font-mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace;
+  --radius:5px;
+  --radius-sm:3px;
+  --shadow:0 1px 3px rgba(0,0,0,.05);
+  --weight-strong:660;
+  --weight-base:400;
+  --mark-bg:var(--warn-soft);
+  --mark-ink:#7a4a00;
+}
+
+/* ===== adr format ===== */
+*{box-sizing:border-box}
+body{ margin:0; background:var(--bg); color:var(--ink); font-family:var(--font-body); font-size:15px; line-height:1.64; }
+.page{ max-width:880px; margin:34px auto; background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow); padding:54px 60px 80px; }
+@media(max-width:720px){ .page{ padding:34px 24px; } }
+
+.mast{ border-bottom:2px solid var(--ink); padding-bottom:14px; margin-bottom:8px; }
+.mast .kicker{ font-family:var(--font-mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:700; }
+h1{ font-size:23px; font-weight:700; letter-spacing:-.015em; margin:6px 0 0; line-height:1.3; }
+
+.meta{ display:grid; grid-template-columns:repeat(2,1fr); gap:2px 30px; margin:16px 0 4px; font-size:12.5px; font-family:var(--font-mono); }
+.meta div{ display:flex; gap:8px; padding:3px 0; border-bottom:1px solid var(--line-soft); }
+.meta .k{ color:var(--ink-faint); min-width:88px; }
+.meta .v{ color:var(--ink-soft); }
+.status{ display:inline-block; font-family:var(--font-mono); font-size:11px; font-weight:700; padding:1px 8px; border-radius:var(--radius-sm); background:var(--warn-soft); color:var(--warn); }
+.status.good{ background:var(--good-soft); color:var(--good); }
+.status.accent{ background:var(--accent-soft); color:var(--accent); }
+
+h2{ font-size:16.5px; font-weight:680; letter-spacing:-.01em; margin:38px 0 10px; padding-top:16px; border-top:1px solid var(--line); }
+h2 .no{ font-family:var(--font-mono); color:var(--accent); font-weight:700; margin-right:12px; font-size:14px; }
+h3{ font-size:13.5px; font-weight:680; margin:20px 0 6px; color:var(--ink-soft); }
+p{ margin:9px 0; color:var(--ink-soft); }
+.lead{ font-size:15px; color:var(--ink-soft); }
+strong{ font-weight:var(--weight-strong); color:var(--ink); }
+em{ font-style:italic; color:var(--ink); background:none; padding:0; }
+code{ font-family:var(--font-mono); font-size:.84em; background:var(--code-bg); padding:1px 5px; border-radius:var(--radius-sm); color:var(--code-ink); }
+
+pre{ font-family:var(--font-mono); font-size:12.2px; line-height:1.55; background:var(--code-bg); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:var(--radius); padding:14px 16px; overflow-x:auto; color:var(--ink-soft); margin:14px 0; white-space:pre; }
+pre b{ color:var(--ink); font-weight:700; }
+pre .c{ color:var(--ink-faint); }
+pre .g{ color:var(--good); font-weight:600; } pre .a{ color:var(--warn); font-weight:600; } pre .r{ color:var(--bad); font-weight:600; }
+
+.callout{ border:1px solid var(--line); border-left:3px solid var(--accent); background:var(--accent-soft); border-radius:var(--radius); padding:11px 15px; margin:14px 0; font-size:14px; color:var(--ink); }
+.callout .lab{ font-family:var(--font-mono); font-size:10.5px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--accent); display:block; margin-bottom:3px; }
+.callout.decision{ border-left-color:var(--good); background:var(--good-soft); }
+.callout.decision .lab{ color:var(--good); }
+.callout.constraint{ border-left-color:var(--warn); background:var(--warn-soft); }
+.callout.constraint .lab{ color:var(--warn); }
+
+table{ width:100%; border-collapse:collapse; margin:14px 0; font-size:13px; }
+th,td{ text-align:left; padding:8px 11px; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+th{ font-family:var(--font-mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); font-weight:700; border-bottom:1.5px solid var(--line); }
+td code{ font-size:11.5px; }
+tbody tr:hover{ background:var(--accent-soft); }
+.chosen td{ background:var(--good-soft); }
+.chosen td:first-child{ font-weight:680; }
+
+ul{ margin:8px 0; padding-left:20px; } li{ margin:4px 0; color:var(--ink-soft); }
+.sm{ font-size:12.5px; color:var(--ink-faint); }
+.rev{ font-family:var(--font-mono); font-size:12px; }
+.rev th,.rev td{ padding:5px 10px; }
+footer{ margin-top:44px; padding-top:14px; border-top:2px solid var(--ink); font-size:11.5px; color:var(--ink-faint); font-family:var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="mast">
+  <div class="kicker">ADR · 저장 아키텍처 · 설계 결정 기록</div>
+  <h1>sessionhub는 원문을 이고 다니지 않는다 — 미러 폐기, 정제본 + 원위치 참조</h1>
+</div>
+
+<div class="meta">
+  <div><span class="k">문서 ID</span><span class="v">ADR-SH-001</span></div>
+  <div><span class="k">개정</span><span class="v">0.2</span></div>
+  <div><span class="k">상태</span><span class="v"><span class="status good">구현 완료</span></span></div>
+  <div><span class="k">분류</span><span class="v">엔지니어링 · 저장</span></div>
+  <div><span class="k">소유</span><span class="v">esc5221 / sessionhub</span></div>
+  <div><span class="k">컴포넌트</span><span class="v">sync · adapters · db</span></div>
+</div>
+
+<h2><span class="no">1.0</span>요약</h2>
+<p class="lead">sessionhub는 지금 <strong>세 가지 일</strong>을 한다 — 모든 머신의 세션을 한 곳으로 <em>미러링</em>하고, 세션마다 한 줄로 <em>요약(인덱싱)</em>하고, 그 요약을 <em>전문 검색</em>한다. 문제는 첫 단계다. 원본을 100% 통째로 복사해 이고 다닌다.</p>
+<p>실측 결과 그 원본의 <strong>0.3%만이 사람과 모델이 실제로 주고받은 말</strong>이고, 나머지 99.7%는 도구 실행 로그·스트리밍 프레임·토큰 usage다. 검색은 이미 80MB짜리 인덱스로 되고, 원본은 오직 "그때 뭐라 했더라"를 다시 읽을 때만 쓰인다. 그 만일을 위해 <strong>10GB를 영구 보관</strong>하고 있다.</p>
+<div class="callout decision"><span class="lab">Decision · 결정</span>
+<strong>미러를 폐기한다.</strong> 원본 로그는 <strong>각 머신의 원래 자리에 그대로 두고</strong>, 허브는 (1) 검색 인덱스와 (2) 대화만 정제한 가벼운 <em>digest</em>를 갖는다. 원문 전체가 필요하면 그때 원위치를 열거나 ssh로 당긴다. <strong>10.1GB → 약 380MB (26배 감소).</strong></div>
+
+<h2><span class="no">2.0</span>지금 구조 — 이놈이 뭐 하는 놈인가</h2>
+<p class="lead">데이터가 어디서 와서 어디로 가는지, 어느 단계에서 트림되는지를 한 장으로.</p>
+<pre><span class="c"># 각 머신 (macpro · mini) — 코딩 에이전트가 남기는 원본 로그</span>
+  ~/.claude/projects/*.jsonl        <span class="c"># Claude Code</span>
+  ~/.codex/sessions/**.jsonl        <span class="c"># Codex</span>
+        │
+        │   <b>① SYNC</b>  rsync -az --delete   <span class="r">← 원본 100% 통째 복사. 트림 안 함</span>
+        ▼
+┌─ mini 허브 ─────────────────────────────────────────────┐
+│  raw/&lt;host&gt;/…            <b class="r">10 GB</b>   원본 그대로 쌓임        │
+│        │                                                 │
+│        │   <b>② PARSE</b>  어댑터가 파싱 <span class="c">(여기서만 트림 발생)</span>       │
+│        ▼                                                 │
+│  hub.db                 <b class="g">80 MB</b>   세션당 요약 1행         │
+│    · first_user_message    첫 사용자 발화, 500자 컷      │
+│    · files_changed         건드린 파일 경로 (휴리스틱)   │
+│    · project/machine/time/tokens                        │
+│    · llm_summary / why_started   <span class="a">← 컬럼만 있고 전부 빔</span>    │
+│        │                                                 │
+│        │   <b>③ INDEX</b>  FTS5 전문검색 인덱스 재구성          │
+│        ▼                                                 │
+│  sessions_fts           검색 대상 <span class="c">(위 요약본만)</span>          │
+└─────────────────────────────────────────────────────────┘
+        ▲
+        │   shm / sessionhub --remote   <span class="c"># 맥북은 조회만 ssh 위임</span></pre>
+
+<div class="callout"><span class="lab">Answer · 세 질문에 대한 답</span>
+<strong>다 백업해서 가져오나?</strong> — raw 층은 그렇다(원본 100%). 이게 10GB의 정체.<br>
+<strong>트림하나?</strong> — DB 층만 그렇다. raw는 트림 안 한다. <em>← 여기가 불일치.</em><br>
+<strong>검색 잘 되게 하나?</strong> — 그렇다(FTS5). 단 검색되는 건 요약본뿐.</div>
+
+<h2><span class="no">3.0</span>트림 로직 — 지금 무엇을, 어떻게 버리는가</h2>
+<p class="lead">현재 트림은 전부 <strong>어댑터의 <code>parse()</code> 안</strong>에 휴리스틱으로 들어있다. 원본을 한 줄씩 읽으며 필요한 필드만 뽑아내고 나머지는 자연히 버려진다.</p>
+
+<h3>3.1 &nbsp;무엇을 남기나</h3>
+<table>
+  <thead><tr><th>남기는 것</th><th>규칙</th><th>버리는 것</th></tr></thead>
+  <tbody>
+    <tr><td>제목</td><td>첫 <code>user</code> 메시지를 120자로 컷</td><td>이후 모든 대화</td></tr>
+    <tr><td>첫 발화 원문</td><td>같은 메시지를 500자로 컷</td><td>500자 초과분</td></tr>
+    <tr><td>파일 목록</td><td><code>tool_use</code>의 file_path/path 추출, 최대 20개</td><td><code>cd/ls/git/npm/cat</code>·http·/dev·/tmp</td></tr>
+    <tr><td>메타</td><td>project·machine·시각·토큰 합계</td><td>턴별 토큰·캐시·모델 파라미터</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 &nbsp;세션 자체를 버리는 기준</h3>
+<ul>
+  <li><strong>메시지 2개 미만</strong> → <code>parse()</code>가 <code>None</code> 반환, 통째 폐기</li>
+  <li><strong>제목이 "SYSTEM"으로 시작</strong> → <code>(agent session)</code>으로 대체 표기</li>
+  <li><strong>subagent / exec</strong> → 저장은 하되 기본 조회에서 숨김(<code>-a</code>로 노출)</li>
+</ul>
+
+<h3>3.3 &nbsp;구현됐지만 비어있는 것</h3>
+<div class="callout constraint"><span class="lab">Constraint · 현황</span>
+스키마에 <code>llm_summary</code>·<code>why_started</code> 컬럼이 있으나 <strong>채우는 코드가 없어 7,424건 전부 비어있다.</strong> "원문 대신 요약을 저장한다"는 설계 의도는 있었으나 절반만 구현됐다 — DB 인덱스는 트림하고, raw 미러는 트림하지 않는 지금의 불일치가 여기서 나온다.</p></div>
+
+<h2><span class="no">4.0</span>측정 — 왜 10GB인가</h2>
+<p class="lead">macpro·mini·로컬에서 40개 파일을 무작위 표본으로 바이트 구성을 쟀다.</p>
+<pre><span class="c"># 원본 JSONL 바이트 구성 (표본 37.6 MB)</span>
+progress          <b>39.0%</b>  ┐
+response_item     <b>31.2%</b>  ├─ 도구 실행 · 스트리밍 로그. 사람이 다시 볼 일 없음
+event_msg         <b>11.1%</b>  ┘
+user              <b>10.7%</b>  ┐
+assistant          <b>2.4%</b>  ┴─ 실제 대화 (이 중 <b>텍스트만</b> 치면 전체의 <b class="g">0.3%</b>)
+session_meta       0.8%
+turn_context       0.5%
+attachment         0.5%
+
+<span class="c"># 결론</span>
+원본의 <b class="r">99.7%</b>가 검색에도, 사람의 재열람에도 안 쓰이는 잡음.
+그걸 이고 다니는 게 <b class="r">10 GB</b>의 실체다.</pre>
+
+<h2><span class="no">5.0</span>제안 아키텍처 — 3층으로 이름 붙이기</h2>
+<p class="lead">멘탈모델의 핵심은 <strong>이름</strong>이다. 지금은 "raw / hub.db" 2층인데 이름이 역할을 안 드러낸다. 세 층으로 재정의하고, 각 층의 소유·수명·크기를 못박는다.</p>
+<pre>┌─ <b>MIRROR</b> ── 각 머신의 원본. sessionhub는 <b>소유하지 않는다</b>. ──────────┐
+│   위치   ~/.claude · ~/.codex  (원래 자리, 그대로)                       │
+│   수명   에이전트가 관리 (sessionhub는 건드리지 않음)                    │
+│   크기   허브에 0 — <b class="g">더 이상 복사해 쌓지 않는다</b>                        │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               │  parse() — 대화 텍스트만 추출
+                               ▼
+┌─ <b>DIGEST</b> ── 세션당 정제 대화. 원문 재열람은 이걸로 대체. ───────────────┐
+│   내용   user·assistant의 <b>text</b>만. tool_use·progress·usage 제거      │
+│   형태   digests/&lt;host&gt;/&lt;id&gt;.txt.zst  (zstd 압축, 세션당 수 KB)          │
+│   크기   <b class="g">~300 MB</b>  (원본의 약 3%, 압축 후)                             │
+└──────────────────────────────┬───────────────────────────────────────┘
+                               │  인덱싱
+                               ▼
+┌─ <b>INDEX</b> ── hub.db. 검색·목록·메타. <b>지금 그대로</b> (이미 잘 트림됨). ───────┐
+│   내용   세션당 요약 1행 + FTS5 + <b>MIRROR 원위치 절대경로</b>              │
+│   크기   <b class="g">80 MB</b>                                                       │
+└───────────────────────────────────────────────────────────────────────┘</pre>
+<p>INDEX는 각 세션이 원래 어느 머신 어느 경로에서 왔는지(<code>origin_host</code> + <code>origin_path</code>)를 이미 안다. <code>sessionhub raw</code>는 먼저 DIGEST를 보여주고, 원문 전체가 필요하면 <strong>그 원위치를 안내하거나 ssh로 그때 당긴다.</strong> 미러를 상시 보관할 이유가 사라진다.</p>
+
+<h2><span class="no">6.0</span>옵션 정리 — 원문을 어떻게 다룰 것인가</h2>
+<p class="lead">축은 하나다: <strong>"원문 전체를 다시 볼 필요가 생겼을 때, 그것을 어디서 가져오는가."</strong> 네 가지 답이 있고, 크기·오프라인 가용성·복잡도가 맞교환된다.</p>
+<table>
+  <thead><tr><th>옵션</th><th>원문 소재</th><th>허브 크기</th><th>오프라인 원문</th><th>판정</th></tr></thead>
+  <tbody>
+    <tr><td>A · 현행 유지</td><td>미러 (허브에 100% 복사)</td><td>10.1 GB</td><td>항상 가능</td><td>기각 — 용량이 운영을 잠식</td></tr>
+    <tr class="chosen"><td><strong>B · 정제본 + 원위치 참조</strong></td><td>MIRROR는 각 머신 원위치, 허브엔 DIGEST</td><td><strong>~380 MB</strong></td><td>정제본은 가능, 전문은 ssh</td><td><strong>채택</strong> — 아래 근거</td></tr>
+    <tr><td>C · 인덱스만</td><td>각 머신 원위치 (허브엔 요약만)</td><td>80 MB</td><td>불가 (요약만)</td><td>대안 — 가장 가벼우나 재열람이 빈약</td></tr>
+    <tr><td>D · 정제본 + 미러 유지</td><td>양쪽 다 보관</td><td>~10.4 GB</td><td>항상 가능</td><td>기각 — 무거움을 안 푼다</td></tr>
+  </tbody>
+</table>
+
+<div class="callout decision"><span class="lab">Decision · 왜 B인가</span>
+<strong>C는 너무 적게 남기고, A·D는 너무 많이 이고 간다.</strong> B는 실제로 쓰이는 0.3%(대화)를 압축해 허브에 두어 <em>"그때 뭐라 했더라"</em>를 오프라인에서도 즉답하고, 그 밖의 로그 전문은 원본이 살아있는 각 머신에 위임한다. 원문은 어차피 에이전트가 원위치에 갖고 있으므로 <strong>이중 보관은 순수 낭비</strong>다. INDEX가 원위치 경로를 기록하니 필요할 때 정확히 찾아간다.</div>
+
+<h3>6.1 &nbsp;B를 뒷받침하는 사실</h3>
+<ul>
+  <li><strong>원문은 사라지지 않는다</strong> — 각 머신의 <code>~/.claude</code>·<code>~/.codex</code>에 그대로 있다. 허브가 복사본을 버려도 원본은 무사.</li>
+  <li><strong>재열람의 90%는 대화면 충분</strong> — 실측상 사람이 다시 찾는 건 "무슨 말을 했나"지 tool_use diff 전문이 아니다. 그건 DIGEST가 담는다.</li>
+  <li><strong>원위치 참조가 이미 가능</strong> — INDEX에 <code>machine</code>과 원본 경로가 있다. <code>origin_host</code> 한 컬럼만 추가하면 <code>ssh &lt;host&gt; less &lt;path&gt;</code>로 전문에 닿는다.</li>
+</ul>
+
+<h2><span class="no">7.0</span>옵션성 — 무엇을 설정 가능하게 두는가</h2>
+<p class="lead">기본값으로 옳은 일을 하되, 취향과 환경 차이를 <strong>두 개의 노브</strong>로만 연다. 노브가 많으면 멘탈모델이 흐려진다 — 이 도구의 "인덱스는 작게" 철학과 어긋난다.</p>
+
+<h3>7.1 &nbsp;노출하는 노브 (2개)</h3>
+<table>
+  <thead><tr><th>설정</th><th>값</th><th>의미</th><th>기본</th></tr></thead>
+  <tbody>
+    <tr class="chosen"><td><code>digest.mode</code></td><td><code>conversation</code></td><td>사람+모델 발화 텍스트만 (권장)</td><td><strong>기본값</strong></td></tr>
+    <tr><td></td><td><code>full</code></td><td>tool 호출·파일 diff 요약까지 포함 (더 큼)</td><td></td></tr>
+    <tr><td></td><td><code>none</code></td><td>DIGEST 안 만듦 = 옵션 C (가장 가벼움)</td><td></td></tr>
+    <tr class="chosen"><td><code>keep_mirror</code></td><td><code>false</code></td><td>정제 후 미러 삭제 = 옵션 B (권장)</td><td><strong>기본값</strong></td></tr>
+    <tr><td></td><td><code>true</code></td><td>원본 미러 상시 보관 = 옵션 A (오프라인 전문 필요시)</td><td></td></tr>
+  </tbody>
+</table>
+<p class="sm">두 노브의 조합이 곧 4옵션이다: <code>conversation·false</code>=B(기본), <code>none·false</code>=C, <code>*·true</code>=A/D. 사용자는 "옵션 A/B/C/D"를 외울 필요 없이 <em>"정제 강도"</em>와 <em>"원본 보관 여부"</em>만 고르면 된다.</p>
+
+<h3>7.2 &nbsp;일부러 노브로 만들지 않는 것</h3>
+<div class="callout constraint"><span class="lab">Constraint · 고정 결정</span>
+<strong>컷 길이</strong>(제목 120·발화 500), <strong>파일 추출 휴리스틱</strong>, <strong>세션 폐기 기준</strong>(2메시지 미만)은 설정으로 열지 않는다. 이것들은 <em>인덱스 품질</em>의 문제이지 사용자가 조율할 취향이 아니다. 노브로 열면 "왜 내 검색이 다르지"의 원인이 늘어난다. 바꿔야 하면 코드 기본값을 바꾼다.</div>
+
+<h2><span class="no">7.3</span>구현 시 확정한 두 가지 조정 (Rev 0.2)</h2>
+<div class="callout"><span class="lab">Refinement · 구현 결정</span>
+초안(Rev 0.1)의 두 지점을 구현하며 더 나은 형태로 확정했다. 목표(원본을 이고 다니지 않는다)는 동일하며, 오히려 더 순수해졌다.</div>
+<table>
+  <thead><tr><th>항목</th><th>초안 0.1</th><th>확정 0.2</th><th>이유</th></tr></thead>
+  <tbody>
+    <tr class="chosen"><td>원격 수집</td><td>미러를 잠깐 받았다 삭제</td><td><strong>ssh export</strong> — 미러를 아예 안 만듦</td><td>매 run마다 삭제하면 rsync 증분이 깨져 15분마다 10GB 재전송. 원격이 digest만 추출해 보내면(<code>sessionhub export --since</code>) 전송이 KB 단위</td></tr>
+    <tr class="chosen"><td>DIGEST 저장</td><td><code>digests/*.txt.zst</code> 파일</td><td><strong>hub.db 내 blob 테이블</strong> (gzip)</td><td>세션당 파일 수천 개는 이동·백업을 번거롭게 함. blob은 ~20MB라 여전히 작고 단일 파일로 관리. zstd는 3.14+ 전용이라 zero-dep 위해 gzip</td></tr>
+  </tbody>
+</table>
+<p><code>keep_mirror</code> 노브는 사라졌다 — 미러 개념 자체가 없으므로 무의미하다. 남은 노브는 <code>digest.mode</code> 하나. 원격 미도달 시 export는 rsync가 그랬듯 조용히 no-op 하고 아무것도 만들지 않는다.</p>
+
+<h2><span class="no">8.0</span>변경 범위 · 마이그레이션</h2>
+<table>
+  <thead><tr><th>#</th><th>변경</th><th>대상</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>parse()</code>가 순회 중 대화 텍스트를 모아 <code>digest</code> 필드로 반환</td><td>adapters/*.py</td></tr>
+    <tr><td>2</td><td>DIGEST 저장 — <code>digests/&lt;host&gt;/&lt;id&gt;.txt.zst</code> 기록</td><td>ingest.py</td></tr>
+    <tr><td>3</td><td>INDEX에 <code>origin_host</code> 컬럼 추가 (원위치 참조용)</td><td>schema.sql · db.py</td></tr>
+    <tr><td>4</td><td><code>[data] keep_mirror</code> · <code>[digest] mode</code> 설정 추가</td><td>config.py</td></tr>
+    <tr><td>5</td><td><code>run</code>: rsync → parse → digest 저장 → <code>keep_mirror=false</code>면 미러 삭제</td><td>sync.py · ingest.py</td></tr>
+    <tr><td>6</td><td><code>raw</code>: DIGEST를 열되, 전문은 <code>origin_host:path</code> 안내 / ssh 조회</td><td>cli.py</td></tr>
+    <tr><td>7</td><td><code>sessionhub compact</code> — 기존 10GB raw를 digest로 변환 후 비움 (1회성)</td><td>cli.py (신규)</td></tr>
+  </tbody>
+</table>
+<div class="callout"><span class="lab">Result · 예상 효과</span>
+<pre style="margin:6px 0 0;background:transparent;border:none;padding:0;">                현행     B(기본)    C(none)
+INDEX(hub.db)   80 MB    80 MB     80 MB
+DIGEST          —        ~300 MB   —
+MIRROR(허브)    10 GB    <b class="g">0</b>         <b class="g">0</b>
+─────────────────────────────────────────
+합계           <b class="r">10.1 GB</b>  <b class="g">~380 MB</b>   <b class="g">80 MB</b>
+원문 재열람     전문     정제본+ssh 원위치만</pre></div>
+
+<h2><span class="no">9.0</span>README에 반영할 것</h2>
+<ul>
+  <li><strong><code>## How it works</code> 교체</strong> — 5.0의 <em>MIRROR → DIGEST → INDEX</em> 3층 그림 + 층별 한 줄. "원본을 다 이고 가지 않는다. 대화만 정제해 보관하고, 검색은 인덱스로."</li>
+  <li><strong><code>## Storage</code> 신규(접이식)</strong> — 4.0 실측표(0.3%)와 8.0 용량표, 두 노브의 트레이드오프. 기본값이 왜 B인지 한 문단.</li>
+  <li><strong>원문 참조 문구</strong> — <code>raw</code>가 전문을 못 열 때 "원본은 <code>&lt;host&gt;:~/.claude/…</code>에 있습니다"를 그대로 출력해, 사용자가 원위치를 <em>안다</em>는 확신을 준다.</li>
+</ul>
+
+<h2><span class="no">A.0</span>개정 이력</h2>
+<table class="rev">
+  <thead><tr><th>Rev</th><th>변경</th><th>상태</th></tr></thead>
+  <tbody>
+    <tr><td>0.1</td><td>최초 초안 — 현황 진단 · 측정 · 3층 재정의 · 4옵션 비교 · 2노브 설계 · 변경범위</td><td>검토용 초안</td></tr>
+    <tr><td>0.2</td><td>구현 완료 — 원격은 ssh export(미러 폐기), DIGEST는 hub.db blob(gzip). keep_mirror 제거, digest.mode만 유지</td><td>구현 완료</td></tr>
+  </tbody>
+</table>
+
+<footer>ADR-SH-001 · Rev 0.2 · sessionhub 저장 아키텍처 · esc5221</footer>
+
+</div>
+</body>
+</html>

@@ -251,10 +251,7 @@ def _setup_hub(cfg: Config, *, assume_yes: bool, install_service: bool = True) -
             )
             config_mod.dump(cfg)
             print(f"  Added '{alias}'. Fetching...")
-            from sessionhub import sync as sync_mod
-
-            sync_mod.sync_all(cfg)
-            ingest_mod.ingest_all(cfg, full=False)
+            ingest_mod.ingest_all(cfg, full=True)
             print(f"  {_archive_summary(cfg)}.")
 
     _install_skill(assume_yes=assume_yes)

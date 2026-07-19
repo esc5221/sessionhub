@@ -26,6 +26,17 @@ class ParsedSession:
     files_changed: list[str] = field(default_factory=list)
     raw_path: str = ""
     raw_mtime: float = 0.0
+    # DIGEST source — ordered (role, kind, text) turns the digest is rendered
+    # from. See sessionhub.digest. Empty when the source has no readable text.
+    digest_turns: list[tuple[str, str, str]] = field(default_factory=list)
+    # Pre-rendered digest text. Set when a session arrives already digested
+    # (from a remote `export`); used instead of rendering digest_turns.
+    digest_text: str | None = None
+    # ORIGIN — where the untrimmed log actually lives, for `raw --full`.
+    #   origin_host: ssh alias, or None when the file is on this machine
+    #   origin_path: the log's path on origin_host (defaults to the parsed path)
+    origin_host: str | None = None
+    origin_path: str | None = None
 
 
 class SessionAdapter(Protocol):

@@ -310,10 +310,20 @@ def main() -> int:
     from sessionhub import ingest as ingest_mod
 
     cfg = config_mod.load(cfg_path)
-    result = ingest_mod.ingest_all(cfg, full=True)
+    # Local (laptop) sessions ingest in place. The "workstation" ones sit in a
+    # raw mirror, so `compact` folds them in and stamps their origin — the same
+    # path a real migration takes. Remote ssh-export isn't exercised (the demo
+    # host isn't reachable), which is fine: compact covers the two-machine view.
+    ingest_mod.ingest_all(cfg, full=True)
+    result = ingest_mod.compact(cfg)
+
+    total = 0
+    import sqlite3
+    with sqlite3.connect(cfg.db_path) as c:
+        total = c.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
 
     print(f"demo archive: {target}")
-    print(f"  sessions: {result['new']}   errors: {result['errors']}")
+    print(f"  sessions: {total}   digests: {result['digested']}   errors: {result['errors']}")
     print()
     print("query it with:")
     print(f"  SESSIONHUB_CONFIG_DIR={target / 'config'} sessionhub search 'connection pool'")

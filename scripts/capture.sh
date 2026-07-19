@@ -62,10 +62,16 @@ capture() {  # capture <name> <theme> <background> <script> [width]
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# 1. Hero: find an old session, then read it.
+# 1. Hero: find an old session, then read its detail.
 make_session "$WORK/hero.sh" \
     'run sessionhub search "connection pool"' \
     'run sessionhub show 8d721671'
+
+# 1b. The digest: what `raw` shows — the trimmed conversation.
+# PAGER=cat so `raw` prints instead of opening a pager under capture.
+make_session "$WORK/digest.sh" \
+    'export PAGER=cat' \
+    'run sessionhub raw 8d721671'
 
 # 2. Everyday use: what have I been doing, and what is in here.
 make_session "$WORK/daily.sh" \
@@ -78,6 +84,7 @@ make_session "$WORK/setup.sh" \
 
 capture hero-dark.png    charm  "#14161e" "$WORK/hero.sh"
 capture hero-light.png   github "#fbfbfa" "$WORK/hero.sh"
+capture digest-dark.png  charm  "#14161e" "$WORK/digest.sh"
 capture daily-dark.png   charm  "#14161e" "$WORK/daily.sh"
 capture daily-light.png  github "#fbfbfa" "$WORK/daily.sh"
 capture status-dark.png  charm  "#14161e" "$WORK/setup.sh" 900

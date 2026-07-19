@@ -80,6 +80,7 @@ class CodexAdapter:
         timestamps: list[str] = []
         user_messages: list[str] = []
         files_changed: set[str] = set()
+        turns: list[tuple[str, str, str]] = []
         token_in = 0
         token_out = 0
         msg_count = 0
@@ -114,15 +115,31 @@ class CodexAdapter:
                     content = payload.get("content", "")
                     if isinstance(content, str) and content.strip():
                         user_messages.append(content.strip())
+                        turns.append(("user", "text", content.strip()))
                     elif isinstance(content, list):
                         for block in content:
                             if (
                                 isinstance(block, dict)
                                 and block.get("type") == "input_text"
                             ):
-                                user_messages.append(block.get("text", "").strip())
+                                t = block.get("text", "").strip()
+                                if t:
+                                    user_messages.append(t)
+                                    turns.append(("user", "text", t))
                 elif role == "assistant":
                     msg_count += 1
+                    content = payload.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        turns.append(("assistant", "text", content.strip()))
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") in (
+                                "output_text",
+                                "text",
+                            ):
+                                t = block.get("text", "").strip()
+                                if t:
+                                    turns.append(("assistant", "text", t))
             elif rec_type == "response_item":
                 payload = rec.get("payload", {})
                 if payload.get("type") == "function_call":
@@ -133,6 +150,8 @@ class CodexAdapter:
                         )
                     except Exception:
                         args = {}
+                    name = payload.get("name", "tool")
+                    picked = ""
                     for key in ("file_path", "path", "file"):
                         fp = args.get(key, "") if isinstance(args, dict) else ""
                         if fp and "/" in fp and not fp.startswith(
@@ -141,6 +160,9 @@ class CodexAdapter:
                             if cwd and fp.startswith(cwd):
                                 fp = fp[len(cwd):].lstrip("/")
                             files_changed.add(fp)
+                            picked = fp
+                    if picked:
+                        turns.append(("assistant", "tool", f"{name} {picked}"[:200]))
             elif rec_type == "turn_context":
                 payload = rec.get("payload", {})
                 usage = payload.get("usage", {})
@@ -208,4 +230,6 @@ class CodexAdapter:
             files_changed=clean_files,
             raw_path=str(path),
             raw_mtime=mtime,
+            digest_turns=turns,
+            origin_path=str(path),
         )

@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   related_commits TEXT,
   raw_path TEXT,
   raw_mtime REAL,
+  -- ORIGIN: where the untrimmed log lives. origin_host is an ssh alias, or NULL
+  -- when the log is on this machine. origin_path is its path there. The hub no
+  -- longer mirrors the log; these let `raw --full` find it in place.
+  origin_host TEXT,
+  origin_path TEXT,
   enrichment_status TEXT DEFAULT 'pending',
   ingested_at TEXT DEFAULT (datetime('now')),
   enriched_at TEXT
@@ -37,6 +42,17 @@ CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
 CREATE INDEX IF NOT EXISTS idx_sessions_machine ON sessions(machine);
 CREATE INDEX IF NOT EXISTS idx_sessions_raw_path ON sessions(raw_path);
+
+-- DIGEST layer — the trimmed conversation, gzip-compressed, one row per
+-- session. Kept in the index DB so the whole archive stays a single portable
+-- file. `mode` records how it was rendered (conversation | full).
+CREATE TABLE IF NOT EXISTS digests (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+  mode TEXT NOT NULL,
+  bytes BLOB NOT NULL,
+  chars INTEGER,
+  built_at TEXT DEFAULT (datetime('now'))
+);
 
 CREATE TABLE IF NOT EXISTS session_tags (
   session_id TEXT REFERENCES sessions(id),

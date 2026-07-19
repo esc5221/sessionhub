@@ -23,7 +23,8 @@ sessionhub recent -d 3              last 3 days
 sessionhub list -p myproject -n 20  filter by project
 sessionhub list -m workstation      filter by machine
 sessionhub show <id-prefix>         session detail (summary, files, tags)
-sessionhub raw <id-prefix>          open the original JSONL transcript
+sessionhub raw <id-prefix>          the conversation (trimmed digest)
+sessionhub raw --full <id-prefix>   the untrimmed log, in place (may ssh)
 sessionhub stats                    totals by source / machine / project
 sessionhub status                   hub health: last sync, last ingest, errors
 sessionhub tag <id-prefix> <tag>    tag a session for later recall
@@ -45,8 +46,10 @@ sessionhub show 2c24cdad                 # → summary, files touched
 sessionhub raw 2c24cdad                  # → only if the detail isn't enough
 ```
 
-Prefer `show` over `raw`. Raw transcripts are large and mostly noise; read
-them only when the specific wording of an exchange matters.
+Prefer `show` over `raw`. `raw` prints the trimmed conversation (a digest);
+read it only when the specific wording of an exchange matters. `raw --full`
+opens the complete original log, fetching it from the origin machine over ssh
+if that is where it lives.
 
 ## Remote hubs
 

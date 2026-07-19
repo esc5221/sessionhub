@@ -55,4 +55,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE project_rules ADD COLUMN source TEXT DEFAULT 'config'"
         )
 
+    for col in ("origin_host", "origin_path"):
+        if table_exists(conn, "sessions") and not _column_exists(conn, "sessions", col):
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+
     conn.commit()

@@ -36,6 +36,32 @@ Claude Code gets a skill during setup, so you can also just ask:
 
 > *find the session where we fixed the pgbouncer timeout*
 
+## How it works
+
+A raw agent transcript is ~99.7% machinery — tool calls, streaming frames,
+token accounting. sessionhub doesn't haul that around. It keeps three layers,
+and only the small ones:
+
+```
+MIRROR   the original logs, left where the agent wrote them
+   │       ~/.claude/projects · ~/.codex/sessions  — sessionhub never copies them
+   ▼
+DIGEST   the conversation, trimmed to what was actually said and gzipped
+   │       remote machines send only this, over ssh — kilobytes, not gigabytes
+   ▼
+INDEX    one small row per session: title, project, files, full-text search
+           plus a pointer back to where the full log lives
+```
+
+`sessionhub search`/`recent`/`list` read the INDEX. `sessionhub raw` prints the
+DIGEST — the conversation, and only the conversation:
+
+![sessionhub raw showing a session's trimmed conversation](docs/digest-dark.png)
+
+`sessionhub raw --full` opens the untrimmed log from the MIRROR — locally, or
+over ssh on the machine that has it. The whole archive is one SQLite file a few
+tens of MB in size, however many sessions it holds.
+
 ## Details
 
 <details>
@@ -61,12 +87,44 @@ sessionhub search "..."       # answered by the archive machine
 sessionhub --local recent     # this machine's own data instead
 ```
 
-Only read-only commands travel. `sync`, `ingest`, `run`, `service` and
-`uninstall` always act locally, so they cannot disturb a remote archive by
-accident.
+The archive pulls a remote machine's sessions by asking it, over ssh, for
+digests only — never the raw logs, which stay put. Read-only queries are
+forwarded the same way; `ingest`, `run`, `service` and `uninstall` always act
+locally, so they can't disturb a remote archive by accident.
 
 ```bash
-sessionhub remote install     # writes a short `shm` alias for the above
+sessionhub remote install     # writes a short `shm` alias for querying
+```
+</details>
+
+<details>
+<summary>Storage — why it stays small</summary>
+
+Measured across a real archive, only **0.3%** of a raw transcript's bytes are
+the conversation; the rest is tool-call and streaming machinery. sessionhub
+keeps that 0.3% (compressed) plus a search index, and leaves the originals
+where the agent wrote them. An archive of thousands of sessions is a few tens
+of MB, not gigabytes.
+
+Two settings tune it, in `~/.config/sessionhub/config.toml`:
+
+```toml
+[digest]
+mode = "conversation"   # what `sessionhub raw` shows and stores:
+                        #   conversation  what was said (default)
+                        #   full          the above + a line per tool action
+                        #   none          no digest — index only, smallest
+```
+
+The cut lengths, file-detection, and what counts as a session aren't settings —
+they're index quality, not preference. `raw --full` always reaches the complete
+original in place, so nothing is truly discarded.
+
+**Upgrading from an old install** that mirrored raw logs? One command builds the
+digests and tells you which directory you can then delete:
+
+```bash
+sessionhub compact
 ```
 </details>
 
@@ -124,10 +182,12 @@ the next refresh.
 ```
 setup                 guided first-run setup
 recent list search    find sessions
-show raw stats        read them
-status                last refresh, errors
-run                   refresh now
-add-host <alias>      copy another machine's sessions INTO this archive
+show                  session detail (title, files, tags)
+raw [--full]          the conversation digest; --full for the untrimmed log
+stats status          totals · last refresh and errors
+run                   refresh now (reads local, pulls remote digests over ssh)
+compact               build digests from a legacy raw mirror, then free it
+add-host <alias>      pull another machine's sessions INTO this archive
 remote set <host>     send this machine's queries OUT to an archive elsewhere
 remote install        write a short `shm` alias for the above
 skill install         (re)install the Claude Code skill
@@ -148,10 +208,13 @@ and the usual `$XDG_*` variables move them.
 ```toml
 [data]
 db_path = "~/.local/share/sessionhub/hub.db"
-raw_dir = "~/.local/share/sessionhub/raw"
+raw_dir = "~/.local/share/sessionhub/raw"   # only a legacy mirror to `compact` from
 
 [schedule]
 interval_minutes = 15
+
+[digest]
+mode = "conversation"                  # conversation | full | none
 
 [sources.local]
 label = "laptop"                       # name shown in results; default: hostname

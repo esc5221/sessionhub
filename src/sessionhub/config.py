@@ -31,6 +31,7 @@ class RemoteSource:
     claude: str | None = None  # remote path like "~/.claude/projects"
     codex_sessions: str | None = None
     codex_state: str | None = None
+    bin: str | None = None  # absolute path to sessionhub on the remote (PATH bypass)
 
 
 @dataclass
@@ -67,6 +68,7 @@ class Config:
     auto_classify: bool = True
     generic_components: list[str] = field(default_factory=list)
     remote_query: RemoteQuery | None = None
+    digest_mode: str = "conversation"   # conversation | full | none
 
     @property
     def config_path(self) -> Path:
@@ -112,6 +114,7 @@ def load(path: Path | None = None) -> Config:
             claude=r.get("claude"),
             codex_sessions=r.get("codex_sessions"),
             codex_state=r.get("codex_state"),
+            bin=r.get("bin"),
         )
         for r in remotes_raw
     ]
@@ -133,6 +136,11 @@ def load(path: Path | None = None) -> Config:
     auto_classify = bool(classification.get("auto_classify", True))
     generic_components = [str(x) for x in classification.get("generic_components", [])]
 
+    digest_raw = raw.get("digest", {})
+    digest_mode = str(digest_raw.get("mode", "conversation"))
+    if digest_mode not in ("conversation", "full", "none"):
+        digest_mode = "conversation"
+
     rq_raw = raw.get("remote_query", {})
     remote_query = None
     if rq_raw.get("host"):
@@ -149,6 +157,7 @@ def load(path: Path | None = None) -> Config:
         auto_classify=auto_classify,
         generic_components=generic_components,
         remote_query=remote_query,
+        digest_mode=digest_mode,
     )
 
 
@@ -197,6 +206,8 @@ def dump(cfg: Config, path: Path | None = None) -> None:
             lines.append(f"codex_sessions = {_quote(r.codex_sessions)}")
         if r.codex_state:
             lines.append(f"codex_state = {_quote(r.codex_state)}")
+        if r.bin:
+            lines.append(f"bin = {_quote(r.bin)}")
         lines.append("")
 
     lines.append("[classification]")
@@ -214,6 +225,10 @@ def dump(cfg: Config, path: Path | None = None) -> None:
                 parts.append(f"priority = {r.priority}")
             lines.append("  { " + ", ".join(parts) + " },")
         lines.append("]")
+    lines.append("")
+
+    lines.append("[digest]")
+    lines.append(f"mode = {_quote(cfg.digest_mode)}")
     lines.append("")
 
     if cfg.remote_query:

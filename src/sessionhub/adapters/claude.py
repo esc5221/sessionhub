@@ -55,6 +55,7 @@ class ClaudeAdapter:
         cwd: str | None = None
         user_messages: list[str] = []
         files_changed: set[str] = set()
+        turns: list[tuple[str, str, str]] = []
         token_in = 0
         token_out = 0
         timestamps: list[str] = []
@@ -76,10 +77,14 @@ class ClaudeAdapter:
                 content = msg.get("content", "")
                 if isinstance(content, str) and content.strip():
                     user_messages.append(content.strip())
+                    turns.append(("user", "text", content.strip()))
                 elif isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "text":
-                            user_messages.append(block.get("text", "").strip())
+                            t = block.get("text", "").strip()
+                            if t:
+                                user_messages.append(t)
+                                turns.append(("user", "text", t))
             elif rec_type == "assistant":
                 msg = rec.get("message", {})
                 usage = msg.get("usage", {})
@@ -91,11 +96,16 @@ class ClaudeAdapter:
                 content = msg.get("content", [])
                 if isinstance(content, list):
                     for block in content:
-                        if (
-                            isinstance(block, dict)
-                            and block.get("type") == "tool_use"
-                        ):
+                        if not isinstance(block, dict):
+                            continue
+                        btype = block.get("type")
+                        if btype == "text":
+                            t = block.get("text", "").strip()
+                            if t:
+                                turns.append(("assistant", "text", t))
+                        elif btype == "tool_use":
                             inp = block.get("input", {})
+                            name = block.get("name", "tool")
                             fp = (
                                 inp.get("file_path")
                                 or inp.get("path")
@@ -110,6 +120,8 @@ class ClaudeAdapter:
                                     if cwd and fp.startswith(cwd):
                                         fp = fp[len(cwd):].lstrip("/")
                                     files_changed.add(fp)
+                            if fp:
+                                turns.append(("assistant", "tool", f"{name} {fp}"[:200]))
 
         if not session_id or not timestamps:
             return None
@@ -158,4 +170,6 @@ class ClaudeAdapter:
             files_changed=clean_files,
             raw_path=str(path),
             raw_mtime=mtime,
+            digest_turns=turns,
+            origin_path=str(path),
         )

@@ -15,12 +15,12 @@ from pathlib import Path
 
 from sessionhub import __version__, style
 from sessionhub import config as config_mod
+from sessionhub import digest as digest_mod
 from sessionhub import ingest as ingest_mod
 from sessionhub import remote as remote_mod
 from sessionhub import service as service_mod
 from sessionhub import skill as skill_mod
 from sessionhub import status as status_mod
-from sessionhub import sync as sync_mod
 from sessionhub import wizard as wizard_mod
 from sessionhub.config import Config, RemoteQuery, RemoteSource
 from sessionhub.db import connect, init_schema, table_exists
@@ -236,18 +236,17 @@ def cmd_rm_host(args: argparse.Namespace) -> int:
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
+    """Pull remote sessions. Now folded into `run`; kept as an explicit verb.
+
+    Remote hosts are pulled as digest streams over ssh (no raw mirroring), so
+    this is just `run` restricted to the remote sources.
+    """
     cfg = _load_or_die()
     if not cfg.remotes:
         print("no remote hosts configured (run `sessionhub add-host`).")
         return 0
-    print(f"syncing {len(cfg.remotes)} host(s)...")
-    results = sync_mod.sync_all(cfg)
-    for r in results:
-        mb = r["bytes"] / (1024 * 1024)
-        status = "✓" if r["status"] == "ok" else "✗"
-        print(f"  {status} {r['host']:<14} {mb:>7.1f} MiB  {r['status']}")
-        for err in r["errors"]:
-            print(f"      {err}")
+    r = ingest_mod.ingest_all(cfg, full=args.full)
+    print(f"synced {len(cfg.remotes)} host(s): new={r['new']} updated={r['updated']} errors={r['errors']}")
     return 0
 
 
@@ -262,15 +261,43 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """sync + ingest. This is what the scheduler calls."""
+    """Refresh the archive. This is what the scheduler calls.
+
+    Local sources are read in place; remote sources are pulled as digests over
+    ssh. No raw logs are mirrored.
+    """
     cfg = _load_or_die()
     print(f"[{_now_utc().isoformat()}] sessionhub run")
-    if cfg.remotes:
-        print("  sync...")
-        sync_mod.sync_all(cfg)
-    print("  ingest...")
     r = ingest_mod.ingest_all(cfg, full=False)
     print(f"  done: new={r['new']} updated={r['updated']} errors={r['errors']}")
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Emit this machine's sessions as a digest stream (used over ssh by a hub).
+
+    Prints one JSON line per local session newer than --since. Carries the
+    trimmed conversation, never the raw log.
+    """
+    cfg = _load_or_die()
+    for line in ingest_mod.export_stream(cfg, since=args.since, mode=args.mode):
+        print(line)
+    return 0
+
+
+def cmd_compact(args: argparse.Namespace) -> int:
+    """One-time: build digests from the legacy raw mirror, then free it."""
+    cfg = _load_or_die()
+    print("compacting — reading the raw mirror to build digests...")
+    r = ingest_mod.compact(cfg)
+    print(f"  processed {r['processed']}  ·  digests {r['digested']}  ·  errors {r['errors']}")
+    raw = Path(r["raw_dir"])
+    if raw.exists():
+        print()
+        print("  digests are built. the raw mirror is now redundant:")
+        print(f"    {raw}")
+        print("  remove it to reclaim space once you've spot-checked `sessionhub raw <id>`:")
+        print(f"    rm -rf {raw}")
     return 0
 
 
@@ -455,19 +482,81 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 def cmd_raw(args: argparse.Namespace) -> int:
+    """Show a session's conversation.
+
+    By default this is the DIGEST — the trimmed dialogue, which is all the hub
+    keeps. `--full` opens the untrimmed log where it actually lives (locally, or
+    on the origin machine over ssh).
+    """
     cfg = _load_or_die()
     conn = _open_archive(cfg)
     row = conn.execute(
-        "SELECT raw_path FROM sessions WHERE id LIKE ?", (f"{args.id}%",)
+        "SELECT id, origin_host, origin_path, raw_path FROM sessions WHERE id LIKE ?",
+        (f"{args.id}%",),
     ).fetchone()
-    if not row or not row["raw_path"]:
+    if not row:
         print("not found.")
         return 1
-    if Path(row["raw_path"]).exists():
-        subprocess.run(["less", row["raw_path"]])
-    else:
-        print(f"file not found: {row['raw_path']}")
+
+    if not args.full:
+        drow = conn.execute(
+            "SELECT bytes FROM digests WHERE session_id=?", (row["id"],)
+        ).fetchone()
+        text = digest_mod.decompress(drow["bytes"]) if drow else None
+        if text:
+            _page(text)
+            return 0
+        print("no digest for this session.")
+        loc = _origin_location(row)
+        if loc:
+            print(f"the full log is at:  {loc}")
+            print("open it with:  sessionhub raw --full " + _short_id(row["id"]))
+        return 1
+
+    # --full : the untrimmed log, in place.
+    host, path = row["origin_host"], row["origin_path"] or row["raw_path"]
+    if not path:
+        print("no origin recorded for this session.")
+        return 1
+    if not host:
+        if Path(path).expanduser().exists():
+            subprocess.run(["less", str(Path(path).expanduser())])
+            return 0
+        print(f"file not found: {path}")
+        return 1
+    # remote: stream it through ssh into a local pager
+    print(f"opening {host}:{path} over ssh...", file=sys.stderr)
+    try:
+        proc = subprocess.Popen(["ssh", host, "cat", path], stdout=subprocess.PIPE)
+        subprocess.run(["less"], stdin=proc.stdout)
+        proc.wait()
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        print(f"could not fetch from {host}: {e}")
+        return 1
     return 0
+
+
+def _origin_location(row) -> str | None:
+    path = row["origin_path"] or row["raw_path"]
+    if not path:
+        return None
+    return f"{row['origin_host']}:{path}" if row["origin_host"] else path
+
+
+def _page(text: str) -> None:
+    """Pipe text through a pager, or just print when there's no tty.
+
+    Honours $PAGER (set it to `cat` to disable paging).
+    """
+    pager = os.environ.get("PAGER", "less")
+    if not sys.stdout.isatty() or pager == "cat":
+        print(text)
+        return
+    try:
+        proc = subprocess.Popen(pager.split(), stdin=subprocess.PIPE, text=True)
+        proc.communicate(text)
+    except (BrokenPipeError, FileNotFoundError):
+        print(text)
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
@@ -740,8 +829,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("id")
     s.set_defaults(func=cmd_show)
 
-    s = sub.add_parser("raw", help="open raw JSONL in less")
+    s = sub.add_parser("raw", help="show a session's conversation (digest)")
     s.add_argument("id")
+    s.add_argument("--full", action="store_true", help="open the untrimmed log in place")
     s.set_defaults(func=cmd_raw)
 
     s = sub.add_parser("stats", help="overall stats")
@@ -757,8 +847,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_status)
 
-    s = sub.add_parser("run", help="sync + ingest (scheduler entry)")
+    s = sub.add_parser("run", help="refresh the archive (scheduler entry)")
     s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("export", help="emit this machine's sessions as a digest stream")
+    s.add_argument("--since", type=float, default=0.0, help="only sessions with mtime > this")
+    s.add_argument("--mode", default="conversation", choices=["conversation", "full", "none"])
+    s.set_defaults(func=cmd_export)
+
+    s = sub.add_parser("compact", help="build digests from a legacy raw mirror, then free it")
+    s.set_defaults(func=cmd_compact)
 
     # changing the setup
     s = sub.add_parser(
@@ -776,7 +874,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("host")
     s.set_defaults(func=cmd_rm_host)
 
-    s = sub.add_parser("sync", help="rsync all configured remotes")
+    s = sub.add_parser("sync", help="pull remote sessions (digest stream over ssh)")
+    s.add_argument("--full", action="store_true", help="re-pull everything, ignore since")
     s.set_defaults(func=cmd_sync)
 
     s = sub.add_parser("ingest", help="parse all sources into DB")

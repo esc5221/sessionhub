@@ -135,3 +135,18 @@ def test_nonsense_gets_no_suggestion(capsys):
     with pytest.raises(SystemExit):
         cli.main(["zzzzzzzz"])
     assert "did you mean" not in capsys.readouterr().err
+
+
+# --- pager ---
+
+def test_page_prints_when_pager_is_cat(monkeypatch, capsys):
+    monkeypatch.setenv("PAGER", "cat")
+    cli._page("hello world")
+    assert "hello world" in capsys.readouterr().out
+
+
+def test_page_prints_when_not_a_tty(monkeypatch, capsys):
+    monkeypatch.delenv("PAGER", raising=False)
+    # pytest already captures stdout, so isatty() is False here.
+    cli._page("no tty here")
+    assert "no tty here" in capsys.readouterr().out

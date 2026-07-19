@@ -80,3 +80,26 @@ def test_missing_config_raises(tmp_path):
         assert "sessionhub init" in str(e)
     else:
         raise AssertionError("expected FileNotFoundError")
+
+
+def test_digest_mode_roundtrip(tmp_path):
+    got = roundtrip(base_cfg(tmp_path, digest_mode="full"), tmp_path)
+    assert got.digest_mode == "full"
+
+
+def test_digest_mode_defaults_to_conversation(tmp_path):
+    assert roundtrip(base_cfg(tmp_path), tmp_path).digest_mode == "conversation"
+
+
+def test_invalid_digest_mode_falls_back(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[data]\ndb_path="x"\nraw_dir="y"\nlog_dir="z"\n[digest]\nmode="bogus"\n')
+    assert config_mod.load(p).digest_mode == "conversation"
+
+
+def test_remote_source_bin_roundtrips(tmp_path):
+    cfg = base_cfg(tmp_path, remotes=[
+        RemoteSource(name="b", host="b", label="b", claude="~/.claude/projects",
+                     bin="/opt/sessionhub"),
+    ])
+    assert roundtrip(cfg, tmp_path).remotes[0].bin == "/opt/sessionhub"
