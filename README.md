@@ -6,6 +6,15 @@ Search everything you've ever done with your coding agents.
 
 ![the same, as you would run it](docs/demo.gif)
 
+Your Claude Code and Codex sessions are already on disk — thousands of JSONL
+files you can't search. sessionhub turns them into one archive you can.
+
+- **Search across everything** — full-text over every session, by project, machine, or changed file.
+- **Both agents, every machine** — Claude Code and Codex; a laptop queries the desktop's archive over ssh.
+- **Tiny on disk** — keeps the trimmed conversation, not the raw logs. ~10 GB of transcripts → a few hundred MB.
+- **Ask, don't type** — installs a skill so your agent searches its own past for you.
+- **Yours only** — no telemetry, no service; the originals never move off your machines.
+
 ## Install
 
 ```bash
@@ -13,15 +22,14 @@ uv tool install git+https://github.com/esc5221/sessionhub
 sessionhub setup
 ```
 
-<sub>No uv? `curl -LsSf https://astral.sh/uv/install.sh | sh`. Python 3.11+.</sub>
+`setup` reads your sessions in, refreshes them on a timer, and — if you use more
+than one machine — asks which keeps the archive and which just query it. It also
+offers the skill to each agent it finds. <sub>No uv? `curl -LsSf https://astral.sh/uv/install.sh | sh`. Python 3.11+.</sub>
 
-`setup` finds your sessions, reads them in, and keeps them up to date on a
-timer. It also asks what this machine is for: if you work on more than one,
-one machine keeps the archive and the others query it over ssh — and it offers
-to install a skill for each coding agent it finds (Claude Code, Codex).
+<details>
+<summary>Or have an agent install it for you</summary>
 
-**Or just tell your agent to do it.** Paste this into Claude Code, Codex, or
-any coding agent:
+Paste this into Claude Code, Codex, or any coding agent:
 
 > Install sessionhub and set it up for this machine. Run:
 > `uv tool install git+https://github.com/esc5221/sessionhub` then
@@ -30,6 +38,7 @@ any coding agent:
 
 `setup --hub -y` sets this machine up as its own archive without prompting;
 `skill install` adds the skill to every agent on the machine.
+</details>
 
 ## Use
 
