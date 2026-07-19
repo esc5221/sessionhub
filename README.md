@@ -8,18 +8,14 @@ Search everything you've ever done with your coding agents.
 
 ```bash
 uv tool install git+https://github.com/esc5221/sessionhub
+sessionhub setup
 ```
 
 <sub>No uv? `curl -LsSf https://astral.sh/uv/install.sh | sh`. Python 3.11+.</sub>
 
-## Set up
-
-```bash
-sessionhub setup
-```
-
-It finds your sessions, asks what this machine is for, and does the rest.
-When it finishes, you can search.
+`setup` finds your sessions, reads them in, and keeps them up to date on a
+timer. It also asks what this machine is for: if you work on more than one,
+one machine keeps the archive and the others query it over ssh.
 
 ## Use
 
@@ -32,9 +28,16 @@ sessionhub show 2c24cdad               # detail — 8 characters of the id is en
 sessionhub raw 2c24cdad                # the original transcript
 ```
 
-Subagent and exec sessions are hidden by default. `-a` includes them.
+Subagent and exec sessions are hidden by default; `-a` includes them.
 
-## More than one machine
+Claude Code gets a skill during setup, so you can also just ask:
+
+> *find the session where we fixed the pgbouncer timeout*
+
+## Details
+
+<details>
+<summary>Working across more than one machine</summary>
 
 Sessions live on whichever machine you were typing on, so pick **one** to keep
 the archive — a desktop that's usually on is ideal. `sessionhub setup` asks
@@ -56,16 +59,20 @@ sessionhub search "..."       # answered by the archive machine
 sessionhub --local recent     # this machine's own data instead
 ```
 
-Both roles are set up the same way: install, `sessionhub setup`, answer.
+Only read-only commands travel. `sync`, `ingest`, `run`, `service` and
+`uninstall` always act locally, so they cannot disturb a remote archive by
+accident.
 
-## Claude Code
+```bash
+sessionhub remote install     # writes a short `shm` alias for the above
+```
+</details>
 
-A skill ships with sessionhub, so you can ask instead of type:
+<details>
+<summary>The Claude Code skill</summary>
 
-> *find the session where we fixed the pgbouncer timeout*
-
-`sessionhub setup` installs it for you. If you'd rather install it the way you
-install any other skill, pick whichever fits:
+`sessionhub setup` installs it. To install it the way you install any other
+skill, pick whichever fits:
 
 ```bash
 # as a plugin, managed by Claude Code
@@ -80,18 +87,10 @@ cp -r plugins/sessionhub/skills/sessionhub .claude/skills/
 ```
 
 Claude Code picks up a new skill straight away — no restart.
-
-## Privacy
-
-`hub.db` holds your sessions verbatim — code, keys, whatever was on screen.
-Treat it like the repositories it came from. It never leaves your machines:
-there is no telemetry and no service to phone home to. The included
-`.gitignore` keeps the database and its raw files out of git.
-
-## Details
+</details>
 
 <details>
-<summary>Which project a session belongs to</summary>
+<summary>How projects are decided</summary>
 
 Guessed from the directory you were working in. Container directories
 (`code`, `work`, `repos`, `src`, …) are skipped in favour of the one that
@@ -118,16 +117,7 @@ the next refresh.
 </details>
 
 <details>
-<summary>Keeping it fresh</summary>
-
-Setup installs a timer (launchd or systemd) that refreshes every 15 minutes.
-`sessionhub run` refreshes now; `sessionhub status` shows the last refresh and
-anything that failed to parse. A session in progress isn't fully on disk yet,
-so the most recent minutes of work may be missing.
-</details>
-
-<details>
-<summary>All the commands</summary>
+<summary>Commands and configuration</summary>
 
 ```
 setup                 guided first-run setup
@@ -143,13 +133,15 @@ service               install/uninstall the refresh timer
 init                  create config non-interactively (setup does this for you)
 uninstall [--purge]   remove the timer, optionally config and data
 ```
-</details>
 
-<details>
-<summary>Config file</summary>
+Setup installs a timer (launchd or systemd) that refreshes every 15 minutes.
+`sessionhub run` refreshes now; `sessionhub status` shows the last refresh and
+anything that failed to parse. A session in progress isn't fully on disk yet,
+so the most recent minutes of work may be missing.
 
-`~/.config/sessionhub/config.toml` — written by setup, edit if you like.
-`$SESSIONHUB_CONFIG_DIR` and `$XDG_CONFIG_HOME` move it.
+Everything lives in `~/.config/sessionhub/config.toml` and
+`~/.local/share/sessionhub/`. `$SESSIONHUB_CONFIG_DIR`, `$SESSIONHUB_DATA_DIR`
+and the usual `$XDG_*` variables move them.
 
 ```toml
 [data]

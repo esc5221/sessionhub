@@ -24,11 +24,7 @@ from sessionhub import sync as sync_mod
 from sessionhub import wizard as wizard_mod
 from sessionhub.config import Config, RemoteQuery, RemoteSource
 from sessionhub.db import connect, init_schema, table_exists
-from sessionhub.paths import (
-    config_file,
-    detect_legacy_layout,
-    ensure_dirs,
-)
+from sessionhub.paths import config_file, ensure_dirs
 
 # --- utilities ---
 
@@ -174,17 +170,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     ensure_dirs()
 
-    # Detect legacy layout in CWD
-    legacy = detect_legacy_layout()
-
     cfg = config_mod.default_for_new_install()
-
-    if legacy and not args.fresh:
-        print(f"detected legacy layout at: {legacy}")
-        print("  hub.db + raw/  will be used in place (not migrated)")
-        cfg.db_path = legacy / "hub.db"
-        cfg.raw_dir = legacy / "raw"
-
     config_mod.dump(cfg)
     conn = connect(cfg.db_path)
     init_schema(conn)
@@ -825,7 +811,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("init", help="create config + db (non-interactive; see `setup`)")
     s.add_argument("--force", action="store_true")
-    s.add_argument("--fresh", action="store_true", help="ignore legacy layout in CWD")
     s.set_defaults(func=cmd_init)
 
     s = sub.add_parser("uninstall", help="remove everything")

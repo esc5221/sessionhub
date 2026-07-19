@@ -62,14 +62,3 @@ def ensure_dirs() -> None:
     for d in (config_dir(), data_dir(), log_dir(), default_raw_dir()):
         d.mkdir(parents=True, exist_ok=True)
 
-
-def detect_legacy_layout(cwd: Path | None = None) -> Path | None:
-    """Detect hub.db + raw/ sitting together in a directory (pre-package layout).
-
-    Returns the directory if found, else None. Used by `init` to offer
-    in-place adoption instead of migration.
-    """
-    cwd = cwd or Path.cwd()
-    if (cwd / "hub.db").exists() and (cwd / "raw").is_dir():
-        return cwd
-    return None
