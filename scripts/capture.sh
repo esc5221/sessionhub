@@ -51,7 +51,6 @@ capture() {  # capture <name> <theme> <background> <script> [width]
         --window \
         --border.radius 8 \
         --padding 24 \
-        --margin 16 \
         --width "${5:-1180}" \
         --font.family "JetBrains Mono,SF Mono,Menlo" \
         --font.size 13 \
@@ -77,10 +76,10 @@ make_session "$WORK/daily.sh" \
 make_session "$WORK/setup.sh" \
     'run sessionhub status'
 
-capture hero-dark.png    charm  "#1a1b26" "$WORK/hero.sh"
+capture hero-dark.png    charm  "#14161e" "$WORK/hero.sh"
 capture hero-light.png   github "#fbfbfa" "$WORK/hero.sh"
-capture daily-dark.png   charm  "#1a1b26" "$WORK/daily.sh"
+capture daily-dark.png   charm  "#14161e" "$WORK/daily.sh"
 capture daily-light.png  github "#fbfbfa" "$WORK/daily.sh"
-capture status-dark.png  charm  "#1a1b26" "$WORK/setup.sh" 900
+capture status-dark.png  charm  "#14161e" "$WORK/setup.sh" 900
 
 echo "done."

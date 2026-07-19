@@ -8,9 +8,10 @@ Set Shell bash
 Set FontFamily "Menlo"
 Set FontSize 13
 Set Width 1180
-Set Height 620
+Set Height 660
 Set Padding 24
-Set Margin 16
+Set WindowBar Colorful
+Set WindowBarSize 40
 Set BorderRadius 8
 Set Theme "TokyoNight"
 Set TypingSpeed 45ms
