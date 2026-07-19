@@ -17,7 +17,19 @@ sessionhub setup
 
 `setup` finds your sessions, reads them in, and keeps them up to date on a
 timer. It also asks what this machine is for: if you work on more than one,
-one machine keeps the archive and the others query it over ssh.
+one machine keeps the archive and the others query it over ssh — and it offers
+to install a skill for each coding agent it finds (Claude Code, Codex).
+
+**Or just tell your agent to do it.** Paste this into Claude Code, Codex, or
+any coding agent:
+
+> Install sessionhub and set it up for this machine. Run:
+> `uv tool install git+https://github.com/esc5221/sessionhub` then
+> `sessionhub setup --hub -y` then `sessionhub skill install`. Then show me
+> `sessionhub recent` so I can see it worked.
+
+`setup --hub -y` sets this machine up as its own archive without prompting;
+`skill install` adds the skill to every agent on the machine.
 
 ## Use
 
@@ -32,7 +44,8 @@ sessionhub raw 2c24cdad                # the conversation; --full for the raw lo
 
 Subagent and exec sessions are hidden by default; `-a` includes them.
 
-Claude Code gets a skill during setup, so you can also just ask:
+Your agents get a skill during setup — Claude Code and Codex both read the
+same one — so you can also just ask:
 
 > *find the session where we fixed the pgbouncer timeout*
 
@@ -130,24 +143,29 @@ sessionhub compact
 </details>
 
 <details>
-<summary>The Claude Code skill</summary>
+<summary>The agent skill</summary>
 
-`sessionhub setup` installs it. To install it the way you install any other
-skill, pick whichever fits:
+Claude Code and Codex both read `<agent>/skills/<name>/SKILL.md`, so one skill
+serves both. `sessionhub setup` offers it for each agent it finds. To (re)install
+it yourself:
 
 ```bash
-# as a plugin, managed by Claude Code
+sessionhub skill install            # every agent found (~/.claude, ~/.codex)
+sessionhub skill install --codex    # just one of them
+```
+
+Or install it the way you install any other skill:
+
+```bash
+# Claude Code, as a managed plugin
 /plugin marketplace add esc5221/sessionhub
 /plugin install sessionhub@sessionhub
-
-# or by hand, for yourself
-sessionhub skill install                     # → ~/.claude/skills/sessionhub/
 
 # or for one project, checked into its repo
 cp -r plugins/sessionhub/skills/sessionhub .claude/skills/
 ```
 
-Claude Code picks up a new skill straight away — no restart.
+Agents pick up a new skill straight away — no restart.
 </details>
 
 <details>
@@ -191,7 +209,7 @@ compact               build digests from a legacy raw mirror, then free it
 add-host <alias>      pull another machine's sessions INTO this archive
 remote set <host>     send this machine's queries OUT to an archive elsewhere
 remote install        write a short `shm` alias for the above
-skill install         (re)install the Claude Code skill
+skill install         (re)install the skill into Claude Code / Codex
 service               install/uninstall the refresh timer
 init                  create config non-interactively (setup does this for you)
 uninstall [--purge]   remove the timer, optionally config and data

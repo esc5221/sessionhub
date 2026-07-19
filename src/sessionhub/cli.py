@@ -697,13 +697,36 @@ def cmd_skill(args: argparse.Namespace) -> int:
     if args.action == "path":
         print(skill_mod.bundled_skill_dir())
         return 0
-    dest = skill_mod.install(Path(args.dir).expanduser() if args.dir else None,
-                             force=args.force)
-    if dest is None:
-        print("skill already installed. use --force to overwrite.")
+
+    # An explicit --dir installs exactly there.
+    if args.dir:
+        dest = skill_mod.install(Path(args.dir).expanduser(), force=args.force)
+        if dest is None:
+            print("skill already installed. use --force to overwrite.")
+            return 1
+        print(f"✓ installed skill to {dest}")
+        return 0
+
+    # Otherwise install into the agents present on this machine.
+    targets = skill_mod.detect_targets()
+    if args.claude:
+        targets = [t for t in targets if t[0] == "Claude Code"]
+    if args.codex:
+        targets = [t for t in targets if t[0] == "Codex"]
+    if not targets:
+        print("no coding agent found (~/.claude, ~/.codex).")
         return 1
-    print(f"✓ installed Claude Code skill to {dest}")
-    print("  ask Claude things like: \"search my past sessions for X\"")
+
+    installed = 0
+    for name, skills_dir in targets:
+        dest = skill_mod.install(skills_dir, force=args.force)
+        if dest is None:
+            print(f"  {name}: already installed (use --force to overwrite)")
+        else:
+            print(f"✓ {name} skill installed to {dest}")
+            installed += 1
+    if installed:
+        print('  ask your agent things like: "search my past sessions for X"')
     return 0
 
 
@@ -896,9 +919,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_remote)
 
-    s = sub.add_parser("skill", help="install the bundled Claude Code skill")
+    s = sub.add_parser("skill", help="install the skill into Claude Code / Codex")
     s.add_argument("action", choices=["install", "path"], nargs="?", default="install")
-    s.add_argument("--dir", help="skills dir (default: ~/.claude/skills)")
+    s.add_argument("--claude", action="store_true", help="Claude Code only")
+    s.add_argument("--codex", action="store_true", help="Codex only")
+    s.add_argument("--dir", help="install into this exact skills dir instead")
     s.add_argument("--force", action="store_true")
     s.set_defaults(func=cmd_skill)
 

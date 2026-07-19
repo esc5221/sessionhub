@@ -79,3 +79,36 @@ def test_plugin_manifest_names_the_same_plugin():
 def test_plugin_skill_sits_where_claude_code_looks():
     assert PLUGIN.parent.parent.name == "skills"
     assert PLUGIN.parent.name == "sessionhub"
+
+
+# --- multi-agent install ---
+
+def test_detect_targets_finds_present_agents(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".codex").mkdir()
+    names = [n for n, _ in skill.detect_targets()]
+    assert names == ["Claude Code", "Codex"]
+
+
+def test_detect_targets_skips_absent_agents(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()          # only Codex present
+    targets = skill.detect_targets()
+    assert [n for n, _ in targets] == ["Codex"]
+    assert targets[0][1] == tmp_path / ".codex" / "skills"
+
+
+def test_detect_targets_empty_when_no_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert skill.detect_targets() == []
+
+
+def test_install_all_writes_into_each_target(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".codex").mkdir()
+    results = list(skill.install_all())
+    assert {n for n, _ in results} == {"Claude Code", "Codex"}
+    assert (tmp_path / ".claude" / "skills" / "sessionhub" / "SKILL.md").exists()
+    assert (tmp_path / ".codex" / "skills" / "sessionhub" / "SKILL.md").exists()

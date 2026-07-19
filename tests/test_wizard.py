@@ -113,7 +113,7 @@ def test_probe_uses_batch_mode_so_it_cannot_hang_on_a_password(monkeypatch):
 
 def test_client_setup_stores_host_and_bin(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", FakeRun([(0, "/opt/sessionhub\n")]))
-    monkeypatch.setattr(wizard.skill_mod, "install", lambda **kw: tmp_path / "skill")
+    monkeypatch.setattr(wizard.skill_mod, "install", lambda *a, **kw: tmp_path / "skill")
 
     assert wizard.run(role="client", host="hubbox", assume_yes=True) == 0
 
@@ -139,7 +139,7 @@ def test_hub_setup_ingests_and_can_skip_the_scheduler(tmp_path, monkeypatch):
         raise AssertionError("the scheduler must not be touched with --no-service")
 
     monkeypatch.setattr(wizard.service_mod, "install", explode)
-    monkeypatch.setattr(wizard.skill_mod, "install", lambda **kw: tmp_path / "skill")
+    monkeypatch.setattr(wizard.skill_mod, "install", lambda *a, **kw: tmp_path / "skill")
 
     assert wizard.run(role="hub", assume_yes=True, install_service=False) == 0
 
@@ -155,7 +155,7 @@ def test_a_failing_scheduler_does_not_fail_setup(tmp_path, monkeypatch, capsys):
         raise OSError("launchctl exploded")
 
     monkeypatch.setattr(wizard.service_mod, "install", broken)
-    monkeypatch.setattr(wizard.skill_mod, "install", lambda **kw: tmp_path / "skill")
+    monkeypatch.setattr(wizard.skill_mod, "install", lambda *a, **kw: tmp_path / "skill")
 
     assert wizard.run(role="hub", assume_yes=True) == 0
     assert "sessionhub run" in capsys.readouterr().out

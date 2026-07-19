@@ -294,14 +294,21 @@ def _setup_client(cfg: Config, host: str | None, *, assume_yes: bool) -> int:
 
 
 def _install_skill(*, assume_yes: bool) -> None:
-    claude_dir = Path.home() / ".claude"
-    if not claude_dir.exists():
+    """Offer the skill to each agent found on this machine.
+
+    Asked once per agent (Claude Code, Codex), default yes, each skippable.
+    """
+    targets = skill_mod.detect_targets()
+    if not targets:
         return
-    if not assume_yes and sys.stdin.isatty():
-        if not _ask_yes("Let Claude Code search your sessions? (installs a skill)", default=True):
-            return
-    dest = skill_mod.install(force=True)
-    print(f"  Claude Code skill installed to {dest}")
+    interactive = not assume_yes and sys.stdin.isatty()
+    for name, skills_dir in targets:
+        if interactive and not _ask_yes(
+            f"Let {name} search your sessions? (installs a skill)", default=True
+        ):
+            continue
+        skill_mod.install(skills_dir, force=True)
+        print(f"  {name} skill installed")
 
 
 def _finish(cfg: Config, *, remote: str | None) -> None:
