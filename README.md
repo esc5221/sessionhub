@@ -59,8 +59,9 @@ DIGEST — the conversation, and only the conversation:
 ![sessionhub raw showing a session's trimmed conversation](docs/digest-dark.png)
 
 `sessionhub raw --full` opens the untrimmed log from the MIRROR — locally, or
-over ssh on the machine that has it. The whole archive is one SQLite file a few
-tens of MB in size, however many sessions it holds.
+over ssh on the machine that has it. The whole archive is one SQLite file —
+hundreds of MB for thousands of sessions, not the tens of gigabytes the raw
+logs occupy.
 
 ## Details
 
@@ -103,8 +104,8 @@ sessionhub remote install     # writes a short `shm` alias for querying
 Measured across a real archive, only **0.3%** of a raw transcript's bytes are
 the conversation; the rest is tool-call and streaming machinery. sessionhub
 keeps that 0.3% (compressed) plus a search index, and leaves the originals
-where the agent wrote them. An archive of thousands of sessions is a few tens
-of MB, not gigabytes.
+where the agent wrote them. Thousands of sessions come to a few hundred MB —
+vs. the tens of gigabytes the raw logs would take.
 
 Two settings tune it, in `~/.config/sessionhub/config.toml`:
 
