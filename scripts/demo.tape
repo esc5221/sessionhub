@@ -6,13 +6,13 @@ Output docs/demo.gif
 
 Set Shell bash
 Set FontFamily "Menlo"
-Set FontSize 13
-Set Width 1180
-Set Height 660
-Set Padding 24
+Set FontSize 26
+Set Width 2360
+Set Height 1320
+Set Padding 48
 Set WindowBar Colorful
-Set WindowBarSize 40
-Set BorderRadius 8
+Set WindowBarSize 80
+Set BorderRadius 16
 Set Theme "TokyoNight"
 Set TypingSpeed 45ms
 Set PlaybackSpeed 1

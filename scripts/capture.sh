@@ -44,16 +44,18 @@ make_session() {  # make_session <file> <commands...>
 }
 
 capture() {  # capture <name> <theme> <background> <script> [width]
+    # Rendered at 2x pixel density (font/padding/width all doubled) so GitHub,
+    # which downscales to the column width, shows it crisp on HiDPI screens.
     freeze --execute "bash $4" \
         --language ansi \
         --theme "$2" \
         --background "$3" \
         --window \
-        --border.radius 8 \
-        --padding 24 \
-        --width "${5:-1180}" \
+        --border.radius 16 \
+        --padding 48 \
+        --width "${5:-2360}" \
         --font.family "JetBrains Mono,SF Mono,Menlo" \
-        --font.size 13 \
+        --font.size 26 \
         --line-height 1.35 \
         --output "$OUT/$1" >/dev/null
     echo "  $OUT/$1"
@@ -87,6 +89,6 @@ capture hero-light.png   github "#fbfbfa" "$WORK/hero.sh"
 capture digest-dark.png  charm  "#14161e" "$WORK/digest.sh"
 capture daily-dark.png   charm  "#14161e" "$WORK/daily.sh"
 capture daily-light.png  github "#fbfbfa" "$WORK/daily.sh"
-capture status-dark.png  charm  "#14161e" "$WORK/setup.sh" 900
+capture status-dark.png  charm  "#14161e" "$WORK/setup.sh" 1800
 
 echo "done."
