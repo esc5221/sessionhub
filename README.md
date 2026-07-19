@@ -49,10 +49,13 @@ sessionhub raw 2c24cdad                # the conversation; --full for the raw lo
 
 Subagent and exec sessions are hidden by default; `-a` includes them.
 
-Your agents get a skill during setup — Claude Code and Codex both read the
-same one — so you can also just ask:
+Your agents get the skill during setup — Claude Code and Codex read the same
+one — so you can invoke it right in the agent instead of the shell:
 
-> *find the session where we fixed the pgbouncer timeout*
+```
+Claude Code   /sessionhub  find the session where we fixed the pgbouncer timeout
+Codex         $sessionhub  find the session where we fixed the pgbouncer timeout
+```
 
 ## How it works
 
