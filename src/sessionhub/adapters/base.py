@@ -7,6 +7,33 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+# System scaffolding that agents inject as a "user" turn but the person never
+# typed: environment blocks, plugin catalogues, slash-command wrappers, caveats.
+# A user turn starting with one of these is not something said — it's noise in
+# both the title and the digest.
+_BOILERPLATE_PREFIXES = (
+    "<environment_context>",
+    "<user_instructions>",
+    "<recommended_plugins>",
+    "<local-command-caveat>",
+    "<local-command-stdout>",   # output of a slash command, not a message
+    "<command-message>",
+    "<command-name>",
+    "<bash-input>",             # a shell line typed at the ! prompt
+    "<bash-stdout>",
+    "<bash-stderr>",
+    "<system-reminder>",
+    "<teammate-message",        # injected by team tooling (note: no closing >)
+    "caveat: the messages below",
+)
+
+
+def is_boilerplate(text: str | None) -> bool:
+    if not text:
+        return True
+    head = text.lstrip()[:48].lower()
+    return head.startswith(_BOILERPLATE_PREFIXES)
+
 
 @dataclass
 class ParsedSession:

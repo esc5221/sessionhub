@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
-from sessionhub.adapters.base import ParsedSession
+from sessionhub.adapters.base import ParsedSession, is_boilerplate
 
 
 def _truncate(text: str | None, max_len: int = 120) -> str | None:
@@ -76,13 +76,15 @@ class ClaudeAdapter:
                 msg = rec.get("message", {})
                 content = msg.get("content", "")
                 if isinstance(content, str) and content.strip():
-                    user_messages.append(content.strip())
-                    turns.append(("user", "text", content.strip()))
+                    t = content.strip()
+                    if not is_boilerplate(t):
+                        user_messages.append(t)
+                        turns.append(("user", "text", t))
                 elif isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "text":
                             t = block.get("text", "").strip()
-                            if t:
+                            if t and not is_boilerplate(t):
                                 user_messages.append(t)
                                 turns.append(("user", "text", t))
             elif rec_type == "assistant":

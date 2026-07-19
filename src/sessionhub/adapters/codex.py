@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
-from sessionhub.adapters.base import ParsedSession
+from sessionhub.adapters.base import ParsedSession, is_boilerplate
 
 
 def _truncate(text: str | None, max_len: int = 120) -> str | None:
@@ -16,6 +16,26 @@ def _truncate(text: str | None, max_len: int = 120) -> str | None:
         return None
     text = text.strip().replace("\n", " ")
     return text[: max_len - 3] + "..." if len(text) > max_len else text
+
+
+def _message_text(content) -> str:
+    """Flatten a codex message's content blocks to plain text."""
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") in (
+            "input_text",
+            "output_text",
+            "text",
+        ):
+            t = block.get("text", "").strip()
+            if t:
+                parts.append(t)
+    return "\n".join(parts).strip()
+
 
 
 class CodexAdapter:
@@ -142,7 +162,20 @@ class CodexAdapter:
                                     turns.append(("assistant", "text", t))
             elif rec_type == "response_item":
                 payload = rec.get("payload", {})
-                if payload.get("type") == "function_call":
+                # Real codex rollouts carry the conversation here, as
+                # payload.type == "message" (user: input_text, assistant:
+                # output_text) rather than in event_msg records.
+                if payload.get("type") == "message":
+                    role = payload.get("role")
+                    text = _message_text(payload.get("content"))
+                    if role == "user" and text and not is_boilerplate(text):
+                        msg_count += 1
+                        user_messages.append(text)
+                        turns.append(("user", "text", text))
+                    elif role == "assistant" and text:
+                        msg_count += 1
+                        turns.append(("assistant", "text", text))
+                elif payload.get("type") == "function_call":
                     args_str = payload.get("arguments", "{}")
                     try:
                         args = (

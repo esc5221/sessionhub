@@ -188,9 +188,10 @@ def _codex_records(session_id, cwd, start, minutes, first_msg, files, rng):
             "payload": {"id": session_id, "cwd": cwd, "originator": "codex_cli"},
         },
         {
-            "type": "event_msg",
+            "type": "response_item",
             "timestamp": _iso(start),
-            "payload": {"role": "user", "content": first_msg},
+            "payload": {"type": "message", "role": "user",
+                        "content": [{"type": "input_text", "text": first_msg}]},
         },
     ]
     step = max(1, minutes // (len(files) + 2))
@@ -210,9 +211,10 @@ def _codex_records(session_id, cwd, start, minutes, first_msg, files, rng):
         )
         records.append(
             {
-                "type": "event_msg",
+                "type": "response_item",
                 "timestamp": _iso(t),
-                "payload": {"role": "assistant", "content": f"Patched {path}."},
+                "payload": {"type": "message", "role": "assistant",
+                            "content": [{"type": "output_text", "text": f"Patched {path}."}]},
             }
         )
     records.append(

@@ -4,8 +4,11 @@ Fixtures are hand-written to the shape of the real files; no personal data.
 """
 
 import json
+import tempfile
+from pathlib import Path
 
-from sessionhub.adapters import ClaudeAdapter
+from sessionhub import digest
+from sessionhub.adapters import ClaudeAdapter, CodexAdapter
 
 
 def write_session(base, project="-home-dev-acme", name="s1.jsonl", records=None):
@@ -142,3 +145,96 @@ def test_subagent_logs_are_not_iterated(tmp_path):
 
 def test_iter_files_on_missing_dir_is_empty(tmp_path):
     assert list(ClaudeAdapter().iter_files(tmp_path / "nope")) == []
+
+
+# --- codex real-format (response_item message) ---
+
+def codex_session(base, sid="019a-demo", cwd="/home/dev/acme", records=None):
+    d = base / "2026" / "03" / "01"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"rollout-2026-03-01T10-00-00-{sid}.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in records or []), encoding="utf-8")
+    return p
+
+
+def test_codex_reads_response_item_messages():
+    import tempfile
+    from pathlib import Path
+
+    from sessionhub.adapters import CodexAdapter
+
+    base = Path(tempfile.mkdtemp())
+    recs = [
+        {"type": "session_meta", "timestamp": "2026-03-01T10:00:00Z",
+         "payload": {"id": "019a-demo", "cwd": "/home/dev/acme"}},
+        {"type": "response_item", "timestamp": "2026-03-01T10:00:01Z",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "add retries to the sender"}]}},
+        {"type": "response_item", "timestamp": "2026-03-01T10:05:00Z",
+         "payload": {"type": "message", "role": "assistant",
+                     "content": [{"type": "output_text", "text": "done, with jitter"}]}},
+    ]
+    s = CodexAdapter().parse(codex_session(base, records=recs), "box")
+    assert s is not None
+    assert s.message_count == 2
+    assert s.fallback_title.startswith("add retries")
+    conv = digest.render(s.digest_turns, "conversation")
+    assert "add retries to the sender" in conv
+    assert "done, with jitter" in conv
+
+
+def test_codex_drops_environment_context_from_the_title():
+    import tempfile
+    from pathlib import Path
+
+    from sessionhub.adapters import CodexAdapter
+
+    base = Path(tempfile.mkdtemp())
+    recs = [
+        {"type": "session_meta", "timestamp": "2026-03-01T10:00:00Z",
+         "payload": {"id": "019b-demo", "cwd": "/home/dev/acme"}},
+        {"type": "response_item", "timestamp": "2026-03-01T10:00:01Z",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "<environment_context>\n  <cwd>/x</cwd>\n</environment_context>"}]}},
+        {"type": "response_item", "timestamp": "2026-03-01T10:00:02Z",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "fix the real bug"}]}},
+        {"type": "response_item", "timestamp": "2026-03-01T10:05:00Z",
+         "payload": {"type": "message", "role": "assistant",
+                     "content": [{"type": "output_text", "text": "ok"}]}},
+    ]
+    s = CodexAdapter().parse(codex_session(base, records=recs), "box")
+    assert s.fallback_title.startswith("fix the real bug")
+    assert "environment_context" not in (s.fallback_title or "")
+
+
+def test_boilerplate_first_turn_is_dropped_from_claude_title(tmp_path):
+    p = write_session(tmp_path, records=[
+        user("<local-command-caveat>Caveat: the messages below...</local-command-caveat>",
+             "2026-01-02T10:00:00Z"),
+        user("actually fix the pool", "2026-01-02T10:01:00Z"),
+        assistant("2026-01-02T10:05:00Z"),
+    ])
+    s = ClaudeAdapter().parse(p, "laptop")
+    assert s.fallback_title.startswith("actually fix the pool")
+
+
+def test_codex_recommended_plugins_block_is_dropped():
+
+    base = Path(tempfile.mkdtemp())
+    recs = [
+        {"type": "session_meta", "timestamp": "2026-03-01T10:00:00Z",
+         "payload": {"id": "c1", "cwd": "/home/dev/acme"}},
+        {"type": "response_item", "timestamp": "2026-03-01T10:00:01Z",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "<recommended_plugins>\n- Box\n</recommended_plugins>"}]}},
+        {"type": "response_item", "timestamp": "2026-03-01T10:00:02Z",
+         "payload": {"type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "migrate the uploads"}]}},
+        {"type": "response_item", "timestamp": "2026-03-01T10:05:00Z",
+         "payload": {"type": "message", "role": "assistant",
+                     "content": [{"type": "output_text", "text": "done"}]}},
+    ]
+    s = CodexAdapter().parse(codex_session(base, sid="c1", records=recs), "box")
+    assert s.fallback_title.startswith("migrate the uploads")
+    assert "recommended_plugins" not in digest.render(s.digest_turns, "conversation")
