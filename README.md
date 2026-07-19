@@ -10,7 +10,7 @@ Your Claude Code and Codex sessions are already on disk — thousands of JSONL
 files you can't search. sessionhub turns them into one archive you can.
 
 - **Search across everything** — full-text over every session, by project, machine, or changed file.
-- **Both agents, every machine** — Claude Code and Codex; a laptop queries the desktop's archive over ssh.
+- **Every machine, in sync** — Claude Code and Codex on all your machines pull into one archive on a timer; a laptop queries it over ssh.
 - **Tiny on disk** — keeps the trimmed conversation, not the raw logs. ~10 GB of transcripts → a few hundred MB.
 - **Ask, don't type** — installs a skill so your agent searches its own past for you.
 - **Yours only** — no telemetry, no service; the originals never move off your machines.
