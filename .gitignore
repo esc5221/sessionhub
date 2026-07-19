@@ -1,0 +1,38 @@
+# --- PRIVACY: never commit session data ---
+# hub.db contains verbatim transcripts of your AI coding sessions.
+# raw/ mirrors the source JSONL files. Both are personal data.
+hub.db
+hub.db-shm
+hub.db-wal
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+raw/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# demo archive built by scripts/make_demo.py (contains a fake hub.db)
+.demo/
+
+# --- tooling ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- editors / os ---
+.DS_Store
+.idea/
+.vscode/
+.omx/

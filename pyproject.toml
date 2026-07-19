@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sessionhub"
+version = "0.1.0"
+description = "Search everything you have ever done with your coding agents — Claude Code and Codex, across every machine"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "esc5221" }]
+license = { text = "MIT" }
+keywords = ["claude-code", "codex", "session", "aggregator", "observability"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+sessionhub = "sessionhub.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/esc5221/sessionhub"
+Issues = "https://github.com/esc5221/sessionhub/issues"
+
+[tool.hatch.build.targets.wheel]
+# schema.sql and skill_files/ live inside the package dir, so hatchling picks
+# them up automatically — a force-include would double-add them and fail.
+packages = ["src/sessionhub"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

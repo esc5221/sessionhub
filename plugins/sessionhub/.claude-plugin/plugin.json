@@ -1,0 +1,9 @@
+{
+  "name": "sessionhub",
+  "description": "Search past coding agent sessions (Claude Code, Codex) collected by sessionhub",
+  "version": "0.1.0",
+  "author": {
+    "name": "esc5221"
+  },
+  "homepage": "https://github.com/esc5221/sessionhub"
+}

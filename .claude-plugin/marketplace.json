@@ -1,0 +1,13 @@
+{
+  "name": "sessionhub",
+  "owner": {
+    "name": "esc5221"
+  },
+  "plugins": [
+    {
+      "name": "sessionhub",
+      "source": "./plugins/sessionhub",
+      "description": "Search past coding agent sessions (Claude Code, Codex) collected by sessionhub"
+    }
+  ]
+}
