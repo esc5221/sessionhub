@@ -22,10 +22,6 @@ uv tool install git+https://github.com/esc5221/sessionhub
 sessionhub setup
 ```
 
-`setup` reads your sessions in, refreshes them on a timer, and — if you use more
-than one machine — asks which keeps the archive and which just query it. It also
-offers the skill to each agent it finds. <sub>No uv? `curl -LsSf https://astral.sh/uv/install.sh | sh`. Python 3.11+.</sub>
-
 <details>
 <summary>Or have an agent install it for you</summary>
 
