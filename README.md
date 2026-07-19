@@ -27,7 +27,7 @@ sessionhub search "split brain"        # full text, across everything
 sessionhub search --file src/auth.py   # sessions that touched a file
 sessionhub list -p acme-api            # one project
 sessionhub show 2c24cdad               # detail — 8 characters of the id is enough
-sessionhub raw 2c24cdad                # the original transcript
+sessionhub raw 2c24cdad                # the conversation; --full for the raw log
 ```
 
 Subagent and exec sessions are hidden by default; `-a` includes them.
