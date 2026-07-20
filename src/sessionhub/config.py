@@ -162,7 +162,7 @@ def load(path: Path | None = None) -> Config:
 
 
 def _quote(s: str) -> str:
-    return '"' + s.replace('"', '\\"') + '"'
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def dump(cfg: Config, path: Path | None = None) -> None:
