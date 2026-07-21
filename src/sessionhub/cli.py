@@ -318,6 +318,10 @@ def cmd_service(args: argparse.Namespace) -> int:
         print(f"  interval: {cfg.interval_minutes} minutes")
         if "plist" in r:
             print(f"  plist:    {r['plist']}")
+        if "task" in r:
+            print(f"  task:     {r['task']}")
+            if "xml" in r:
+                print(f"  xml:      {r['xml']}")
     elif args.action == "uninstall":
         r = service_mod.uninstall(cfg)
         print("✓ service uninstalled" if r.get("removed") else "not installed")
@@ -327,6 +331,8 @@ def cmd_service(args: argparse.Namespace) -> int:
             print("installed: yes")
             if "loaded" in r:
                 print(f"loaded:    {'yes' if r['loaded'] else 'no'}")
+            if "status" in r:
+                print(f"status:    {r['status']}")
         else:
             print("installed: no")
     return 0
@@ -929,7 +935,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # query commands
 
-    s = sub.add_parser("service", help="install/uninstall scheduler (launchd/systemd)")
+    s = sub.add_parser("service", help="install/uninstall scheduler (launchd/systemd/Task Scheduler)")
     s.add_argument("action", choices=["install", "uninstall", "status"])
     s.set_defaults(func=cmd_service)
 
