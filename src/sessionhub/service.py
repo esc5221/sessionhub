@@ -293,7 +293,7 @@ def _win_task_xml(interval_minutes: int) -> str:
   <Principals>
     <Principal>
       <UserId>{_xml_escape(userId)}</UserId>
-      <LogonType>InteractiveToken</LogonType>
+      <LogonType>S4U</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
   </Principals>
@@ -338,37 +338,52 @@ def _schtasks(*args: str, capture: bool = True) -> subprocess.CompletedProcess:
     )
 
 
-def _delete_win_task(name: str) -> bool:
-    r = _schtasks("/Query", "/TN", name, "/FO", "LIST")
-    if r.returncode != 0:
-        return False
-    _schtasks("/Delete", "/TN", name, "/F")
-    return True
+def _task_exists(name: str) -> bool:
+    return _schtasks("/Query", "/TN", name, "/FO", "LIST").returncode == 0
+
+
+def _run_elevated_ps(inner_command: str) -> tuple[int, str]:
+    import base64
+
+    b64 = base64.b64encode(inner_command.encode("utf-16-le")).decode("ascii")
+    outer_command = (
+        "$ErrorActionPreference = 'Stop'; "
+        "try { "
+        "$p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait "
+        "-PassThru -WindowStyle Hidden -ArgumentList "
+        "'-NoProfile','-NonInteractive','-WindowStyle','Hidden',"
+        f"'-EncodedCommand','{b64}'; "
+        "exit $p.ExitCode "
+        "} catch { exit 1223 }" # 1223: ERROR_CANCELLED (UAC rejected)
+    )
+    r = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", outer_command],
+        capture_output=True,
+        text=True,
+    )
+    err = (r.stderr or "").strip()
+    if r.returncode == 1223 and not err:
+        err = "UAC was rejected"
+    return r.returncode, err
 
 
 def _install_win(cfg: Config) -> dict:
-    # Drop any task installed under an older name first.
-    for legacy in LEGACY_WIN_TASK_NAMES:
-        _delete_win_task(legacy)
-
     xml_path = _win_xml_path()
     xml_path.parent.mkdir(parents=True, exist_ok=True)
     xml_path.write_text(_win_task_xml(cfg.interval_minutes), encoding="utf-16")
 
-    # Idempotent: delete an existing task with the same name first.
-    _delete_win_task(WIN_TASK_NAME)
-
-    r = _schtasks(
-        "/Create",
-        "/TN", WIN_TASK_NAME,
-        "/XML", str(xml_path),
-        "/F",
+    stale = "".join(
+        f"schtasks /Delete /TN {n} /F 2>$null; "
+        for n in (WIN_TASK_NAME, *LEGACY_WIN_TASK_NAMES)
     )
-    if r.returncode != 0:
-        raise RuntimeError(
-            f"schtasks /Create failed (rc={r.returncode}): "
-            f"{(r.stderr or '').strip()}"
-        )
+    command = (
+        f"{stale}"
+        f'schtasks /Create /TN {WIN_TASK_NAME} /XML "{xml_path}" /F; '
+        "exit $LASTEXITCODE"
+    )
+    rc, err = _run_elevated_ps(command)
+    if rc != 0:
+        raise RuntimeError(f"schtasks /Create failed (rc={rc}): {err}")
     return {
         "task": WIN_TASK_NAME,
         "xml": str(xml_path),
@@ -377,20 +392,29 @@ def _install_win(cfg: Config) -> dict:
 
 
 def _uninstall_win(cfg: Config) -> dict:
-    removed = [
+    existing = [
         name
         for name in (WIN_TASK_NAME, *LEGACY_WIN_TASK_NAMES)
-        if _delete_win_task(name)
+        if _task_exists(name)
     ]
+    if existing:
+        command = (
+            "".join(f"schtasks /Delete /TN {n} /F; " for n in existing)
+            + "exit $LASTEXITCODE"
+        )
+        rc, err = _run_elevated_ps(command)
+        if rc != 0:
+            raise RuntimeError(f"schtasks /Delete failed (rc={rc}): {err}")
+
     xml = _win_xml_path()
     if xml.exists():
         try:
             xml.unlink()
         except OSError:
             pass
-    if not removed:
+    if not existing:
         return {"removed": False, "reason": "no task"}
-    return {"removed": True, "tasks": removed}
+    return {"removed": True, "tasks": existing}
 
 
 def _status_win(cfg: Config) -> dict:
