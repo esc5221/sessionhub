@@ -3,6 +3,8 @@
 import shutil
 import sys
 
+import pytest
+
 from sessionhub import service
 
 
