@@ -9,6 +9,8 @@ import sqlite3
 from importlib import resources
 from pathlib import Path
 
+from sessionhub import bodyindex
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,3 +62,6 @@ def init_schema(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
 
     conn.commit()
+
+    # Conversation-text index (created quietly; absent on a SQLite without contentless_delete)
+    bodyindex.ensure(conn)

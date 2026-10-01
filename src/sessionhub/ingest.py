@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sessionhub import bodyindex
 from sessionhub import digest as digest_mod
 from sessionhub.adapters import ClaudeAdapter, CodexAdapter, ParsedSession, SessionAdapter
 from sessionhub.classify import classify, sync_config_rules
@@ -454,6 +455,9 @@ def ingest_all(cfg: Config, *, full: bool = False) -> dict:
     # post-processing — rebuild FTS only for changed sessions (simple: full rebuild if anything changed)
     if total_new or total_updated or full:
         _rebuild_fts(conn)
+    # Conversation-text index: incremental, so it is cheap when nothing changed
+    # and builds everything once on the first run after an upgrade.
+    bodyindex.update(conn)
 
     conn.close()
 
@@ -506,6 +510,7 @@ def compact(cfg: Config) -> dict:
             ))
 
     _rebuild_fts(conn)
+    bodyindex.update(conn)
     conn.commit()
     digested = conn.execute("SELECT COUNT(*) FROM digests").fetchone()[0]
     conn.close()
