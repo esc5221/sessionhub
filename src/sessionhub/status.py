@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from sessionhub import bodyindex
 from sessionhub.config import Config
 from sessionhub.db import connect, init_schema
 
@@ -59,6 +60,9 @@ def summarize(cfg: Config) -> dict:
         """
     ).fetchall()
 
+    body_indexed, body_total = bodyindex.counts(conn)
+    body_available = bodyindex.available(conn)
+
     err_count = conn.execute("SELECT COUNT(*) FROM ingest_errors").fetchone()[0]
     err_samples = conn.execute(
         "SELECT path, error, attempts FROM ingest_errors ORDER BY last_seen DESC LIMIT 5"
@@ -75,6 +79,12 @@ def summarize(cfg: Config) -> dict:
         "syncs": [dict(r) | {"age": _age(r["finished_at"])} for r in sync_rows],
         "errors": err_count,
         "error_samples": [dict(r) for r in err_samples],
+        "conversation_index": {
+            "available": body_available,
+            "indexed": body_indexed,
+            "digests": body_total,
+        },
+        "queries_forwarded_to": cfg.remote_query.host if cfg.remote_query else None,
         "interval_minutes": cfg.interval_minutes,
         "config_remotes": [r.name for r in cfg.remotes],
     }
@@ -87,7 +97,16 @@ def print_summary(cfg: Config) -> None:
     print("=" * 60)
     print(f"DB:         {s['db_path']}")
     print(f"Sessions:   {s['total_sessions']}  ({s['classified_sessions']} classified)")
+    ci = s["conversation_index"]
+    if ci["digests"]:
+        state = "" if ci["available"] else "  (unavailable: needs SQLite 3.43+)"
+        print(f"Text index: {ci['indexed']} of {ci['digests']} conversations searchable{state}")
     print(f"Errors:     {s['errors']}")
+    if s["queries_forwarded_to"] and s["total_sessions"] == 0:
+        print(
+            f"Note:       this machine's own archive is empty; it queries '{s['queries_forwarded_to']}'"
+            " (run without --local)."
+        )
     print()
 
     print("Last ingest:")

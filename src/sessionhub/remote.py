@@ -22,7 +22,7 @@ from sessionhub.config import Config, RemoteQuery
 
 # Commands safe to run against a remote hub.
 FORWARDABLE = frozenset(
-    {"recent", "list", "search", "show", "raw", "stats", "status", "tag"}
+    {"recent", "list", "search", "show", "raw", "stats", "status", "tag", "doctor"}
 )
 
 # Commands needing an interactive terminal on the far end (they page output).

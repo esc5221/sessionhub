@@ -13,9 +13,10 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sessionhub import __version__, style
+from sessionhub import __version__, bodyindex, style
 from sessionhub import config as config_mod
 from sessionhub import digest as digest_mod
+from sessionhub import doctor as doctor_mod
 from sessionhub import ingest as ingest_mod
 from sessionhub import remote as remote_mod
 from sessionhub import service as service_mod
@@ -45,6 +46,8 @@ def _open_archive(cfg: Config):
     if cfg.db_path.exists():
         conn = connect(cfg.db_path)
         if table_exists(conn, "sessions"):
+            if cfg.remote_query and conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone() is None:
+                _note_empty_client_archive(cfg)
             return conn
         conn.close()
 
@@ -59,6 +62,16 @@ def _open_archive(cfg: Config):
     else:
         print("  Set one up with:  sessionhub setup", file=sys.stderr)
     sys.exit(1)
+
+
+def _note_empty_client_archive(cfg: Config) -> None:
+    """An empty local archive on a client is normal, not a sign that nothing is collected."""
+    print(
+        f"note: this machine's own archive is empty. It is set up to query '{cfg.remote_query.host}',"
+        " where the sessions are collected;",
+        file=sys.stderr,
+    )
+    print("      --local reads only this empty database. Run without --local to query the hub.", file=sys.stderr)
 
 
 def _now_utc() -> datetime:
@@ -131,6 +144,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
     )
 
 
+def _command_count() -> int:
+    sub = next(a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction))
+    return len(sub.choices)
+
+
 def cmd_overview(args: argparse.Namespace) -> int:
     """What a bare `sessionhub` prints: where you are, and what to type next."""
     try:
@@ -158,7 +176,7 @@ def cmd_overview(args: argparse.Namespace) -> int:
     print()
     print("  sessionhub recent              what you did lately")
     print('  sessionhub search "..."        find an old session')
-    print("  sessionhub --help              all 19 commands")
+    print(f"  sessionhub --help              all {_command_count()} commands")
     return 0
 
 
@@ -205,6 +223,20 @@ def cmd_add_host(args: argparse.Namespace) -> int:
     if any(r.name == args.host for r in cfg.remotes):
         print(f"host '{args.host}' already exists in config.")
         return 1
+
+    # The same machine reached through a second alias would be collected twice,
+    # under two labels. A label is only a name; the machine id is what tells.
+    ident = doctor_mod.probe(args.host)
+    dup = doctor_mod.find_duplicate(cfg, ident)
+    if dup and not args.force:
+        other_label, _ = dup
+        print(f"! '{args.host}' is the same machine as '{other_label}' (machine id {ident.short_id}).")
+        print("  Adding it would store every session twice, under two labels.")
+        print("  If that is really intended, run again with --force.")
+        return 1
+    if not ident.machine_id:
+        print(f"! could not read a machine id from '{args.host}' ({ident.error or 'no id reported'});")
+        print("  skipping the check for an already-collected machine.")
 
     remote = RemoteSource(
         name=args.host,
@@ -310,6 +342,13 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    cfg = _load_or_die()
+    info = doctor_mod.collect(cfg, probe_ssh=not args.no_ssh)
+    doctor_mod.render(info)
+    return 1 if info["warnings"] else 0
+
+
 def cmd_service(args: argparse.Namespace) -> int:
     cfg = _load_or_die()
     if args.action == "install":
@@ -338,6 +377,59 @@ def cmd_service(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- project filters ---
+
+def _project_clause(value: str) -> tuple[str, list]:
+    """SQL for `-p VALUE`.
+
+    The listing shows `project/subsystem` as one word, so people type either half
+    (`-p mathking` for project `turing`, subsystem `mathking`) or the whole. VALUE
+    matches a project, a subsystem, or `project/subsystem`, ignoring case.
+    """
+    if "/" in value:
+        proj, _, sub = value.partition("/")
+        return (
+            "(project = ? COLLATE NOCASE AND subsystem = ? COLLATE NOCASE)",
+            [proj, sub],
+        )
+    return (
+        "(project = ? COLLATE NOCASE OR subsystem = ? COLLATE NOCASE)",
+        [value, value],
+    )
+
+
+def _known_project_names(conn) -> set[str]:
+    names: set[str] = set()
+    for proj, sub in conn.execute("SELECT DISTINCT project, subsystem FROM sessions"):
+        if proj:
+            names.add(proj)
+        if sub:
+            names.add(sub)
+        if proj and sub:
+            names.add(f"{proj}/{sub}")
+    return names
+
+
+def _project_hint(conn, value: str | None, *, flag: str = "-p") -> str | None:
+    """When a project filter names nothing that exists, say so and suggest names."""
+    if not value:
+        return None
+    known = _known_project_names(conn)
+    low = value.lower()
+    if any(k.lower() == low for k in known):
+        return None  # the name is real; the filters (days, origin, machine) emptied the list
+    by_lower = {k.lower(): k for k in known}
+    near = [by_lower[m] for m in difflib.get_close_matches(low, list(by_lower), n=5, cutoff=0.6)]
+    near += [k for k in sorted(known) if low in k.lower() or k.lower() in low]
+    near = list(dict.fromkeys(near))[:5]
+    msg = f"  no project or subsystem is named '{value}' (the {flag} filter matches names exactly)."
+    if near:
+        msg += "\n  did you mean: " + ", ".join(near)
+    else:
+        msg += "\n  see the names in use with `sessionhub stats`."
+    return msg
+
+
 def cmd_recent(args: argparse.Namespace) -> int:
     cfg = _load_or_die()
     conn = _open_archive(cfg)
@@ -350,12 +442,16 @@ def cmd_recent(args: argparse.Namespace) -> int:
         sql += " AND machine = ?"
         params.append(args.machine)
     if args.project:
-        sql += " AND project = ?"
-        params.append(args.project)
+        clause, extra = _project_clause(args.project)
+        sql += f" AND {clause}"
+        params += extra
     sql += " ORDER BY started_at DESC"
     rows = conn.execute(sql, params).fetchall()
     if not rows:
         print(f"no sessions in last {args.days} day(s).")
+        hint = _project_hint(conn, args.project)
+        if hint:
+            print(hint)
         return 0
     print(style.bold(f"recent (last {args.days}d)"))
     print()
@@ -376,8 +472,9 @@ def cmd_list(args: argparse.Namespace) -> int:
         sql += " AND origin = ?"
         params.append(args.origin)
     if args.project:
-        sql += " AND project = ?"
-        params.append(args.project)
+        clause, extra = _project_clause(args.project)
+        sql += f" AND {clause}"
+        params += extra
     if args.subsystem:
         sql += " AND subsystem = ?"
         params.append(args.subsystem)
@@ -388,16 +485,43 @@ def cmd_list(args: argparse.Namespace) -> int:
     rows = conn.execute(sql, params).fetchall()
     if not rows:
         print("no sessions found.")
+        for hint in (_project_hint(conn, args.project), _project_hint(conn, args.subsystem, flag="-s")):
+            if hint:
+                print(hint)
         return 0
     for r in rows:
         print(_row(r, show_source=True))
     return 0
 
 
+def _search_metadata_expr(query: str) -> str | None:
+    return bodyindex.build_match(query)
+
+
+def _zero_result_help(conn, query: str) -> None:
+    """Say what was searched, so an empty answer is not mistaken for 'not collected'."""
+    print(f"no results for '{query}'.")
+    scope = "title, summary, first message, project, changed files, tags"
+    indexed, digests = bodyindex.counts(conn)
+    if bodyindex.available(conn) and indexed:
+        scope += f", and the conversation text of {indexed:,} sessions"
+    print(f"  searched: {scope}")
+    if digests and not bodyindex.available(conn):
+        print("  conversation text is not indexed on this archive (SQLite 3.43+ is needed).")
+    elif digests and indexed < digests:
+        print(
+            f"  conversation text is only indexed for {indexed:,} of {digests:,} sessions so far;"
+            " the rest is added by the next `sessionhub run` on the hub."
+        )
+    print("  every word must appear. Try fewer or plainer words; filter by project with `list -p NAME`.")
+
+
 def cmd_search(args: argparse.Namespace) -> int:
     cfg = _load_or_die()
     conn = _open_archive(cfg)
     query = " ".join(args.query)
+    limit = max(1, int(args.limit))
+    body_only = 0
     if args.tag:
         rows = conn.execute(
             """
@@ -408,35 +532,53 @@ def cmd_search(args: argparse.Namespace) -> int:
             """,
             (query,),
         ).fetchall()
+        total = len(rows)
     elif args.file:
         rows = conn.execute(
             "SELECT * FROM sessions WHERE files_changed LIKE ? ORDER BY started_at DESC",
             (f"%{query}%",),
         ).fetchall()
+        total = len(rows)
     else:
-        # FTS5 treats hyphens/punctuation as operators. Quote the query as a
-        # phrase when it contains non-word characters.
-        import re as _re
-
-        fts_query = query
-        if _re.search(r"[^\w\s]", query):
-            fts_query = '"' + query.replace('"', '""') + '"'
+        meta_ids: set[str] = set()
+        expr = _search_metadata_expr(query)
+        if expr:
+            meta_ids = {
+                r[0]
+                for r in conn.execute(
+                    "SELECT id FROM sessions_fts WHERE sessions_fts MATCH ?", (expr,)
+                )
+            }
+        body_ids = bodyindex.search_ids(conn, query)
+        ids = meta_ids | body_ids
+        body_only = len(body_ids - meta_ids)
         rows = conn.execute(
             """
-            SELECT s.* FROM sessions_fts fts
-            JOIN sessions s ON fts.id = s.id
-            WHERE sessions_fts MATCH ?
-            ORDER BY s.started_at DESC LIMIT 30
+            SELECT * FROM sessions
+            WHERE id IN (SELECT value FROM json_each(?))
+            ORDER BY started_at DESC
             """,
-            (fts_query,),
+            (json.dumps(sorted(ids)),),
         ).fetchall()
+        total = len(rows)
+    rows = rows[:limit]
     if not rows:
-        print(f"no results for '{query}'.")
+        if args.tag or args.file:
+            print(f"no results for '{query}'.")
+        else:
+            _zero_result_help(conn, query)
         return 0
-    print(style.bold(f"search '{query}'") + style.dim(f"  ({len(rows)} found)"))
+    print(style.bold(f"search '{query}'") + style.dim(f"  ({total} found)"))
     print()
     for r in rows:
         print(_row(r))
+    notes = []
+    if body_only:
+        notes.append(f"{body_only} matched only in the conversation text")
+    if total > len(rows):
+        notes.append(f"showing the newest {len(rows)} of {total}; raise it with -n")
+    if notes:
+        print(style.dim("\n  " + "; ".join(notes)))
     return 0
 
 
@@ -823,16 +965,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_setup)
 
     # finding things
-    s = sub.add_parser("search", help="full-text search")
+    s = sub.add_parser(
+        "search", help="full-text search (titles, summaries, files, and conversation text)"
+    )
     s.add_argument("query", nargs="+")
     s.add_argument("--tag", action="store_true")
     s.add_argument("--file", action="store_true")
+    s.add_argument("-n", "--limit", type=int, default=30, help="most results to show (default 30)")
     s.set_defaults(func=cmd_search)
 
     s = sub.add_parser("recent", help="recent sessions")
     s.add_argument("-d", "--days", type=int, default=1)
-    s.add_argument("-m", "--machine")
-    s.add_argument("-p", "--project")
+    s.add_argument("-m", "--machine", help="machine label (see `sessionhub doctor`)")
+    s.add_argument("-p", "--project", help="project, subsystem, or project/subsystem")
     s.add_argument(
         "-a", "--all", action="store_true",
         help="include subagent/exec sessions (default: interactive only)",
@@ -840,9 +985,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_recent)
 
     s = sub.add_parser("list", help="filtered session list")
-    s.add_argument("-p", "--project")
+    s.add_argument("-p", "--project", help="project, subsystem, or project/subsystem")
     s.add_argument("-s", "--subsystem")
-    s.add_argument("-m", "--machine")
+    s.add_argument("-m", "--machine", help="machine label (see `sessionhub doctor`)")
     s.add_argument("-n", "--limit", type=int, default=20)
     s.add_argument(
         "-a", "--all", action="store_true",
@@ -875,6 +1020,12 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status", help="health check")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_status)
+
+    s = sub.add_parser(
+        "doctor", help="which machine each label is, and what looks wrong (read-only)"
+    )
+    s.add_argument("--no-ssh", action="store_true", help="do not contact the remote hosts")
+    s.set_defaults(func=cmd_doctor)
 
     s = sub.add_parser("run", help="refresh the archive (scheduler entry)")
     s.set_defaults(func=cmd_run)
