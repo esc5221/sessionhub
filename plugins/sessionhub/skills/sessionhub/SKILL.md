@@ -5,8 +5,12 @@ description: Search and read past AI coding sessions (Claude Code + Codex) colle
 
 # sessionhub
 
-Queries a local SQLite archive of your Claude Code and Codex sessions:
-titles, projects, timing, changed files, and full-text search over transcripts.
+Queries a SQLite archive of your Claude Code and Codex sessions: titles,
+projects, timing, changed files, and full-text search. `search` covers each
+session's title, summary, first message, project, changed files and tags, and
+also the **conversation text** (the same trimmed digest `raw` prints). Tool
+calls and their output are not kept, so a word that only ever appeared inside a
+command or a tool result is not searchable.
 
 Start with `search` when you know roughly what was said, `recent`/`list` when
 you know roughly when it happened. Session IDs may be abbreviated to their
@@ -16,7 +20,7 @@ column of every result listing.
 ## Commands
 
 ```
-sessionhub search "split brain"     full-text search (multi-word is fine)
+sessionhub search "split brain"     full-text search; every word must appear
 sessionhub search --tag NAME        by tag
 sessionhub search --file PATH       sessions that touched a file path
 sessionhub recent -d 3              last 3 days
@@ -27,12 +31,20 @@ sessionhub raw <id-prefix>          the conversation (trimmed digest)
 sessionhub raw --full <id-prefix>   the untrimmed log, in place (may ssh)
 sessionhub stats                    totals by source / machine / project
 sessionhub status                   hub health: last sync, last ingest, errors
+sessionhub doctor                   which physical machine each label is; flags duplicates
 sessionhub tag <id-prefix> <tag>    tag a session for later recall
 ```
 
 ### Filters for `recent` / `list`
 
 - `-d DAYS` time window, `-m MACHINE`, `-p PROJECT`, `-s SUBSYSTEM`, `-n LIMIT`
+- Listings print `project/subsystem` as one word (e.g. `turing/mathking`).
+  `-p` accepts the project, the subsystem, or the whole `project/subsystem`,
+  ignoring case; `-s` is the subsystem alone. A name that exists nowhere prints
+  suggestions instead of a bare "no sessions found".
+- `-m` takes a machine **label** — a name from the hub's config, not
+  necessarily the machine's hostname. `sessionhub doctor` shows which machine
+  each label is.
 - By default only **interactive** sessions are shown. Subagent and exec
   sessions are hidden because they are numerous and rarely what a person means
   by "the session where…". Add `-a/--all` to include them, or
@@ -67,6 +79,15 @@ Only queries are forwarded. `sync`, `ingest`, `run`, `service`, and
 `uninstall` always act on the local machine, so they cannot disturb a remote
 hub by accident.
 
+## Do not reconfigure the hub from an agent session
+
+`add-host`, `rm-host`, `remote set/unset`, `service`, `init`, `sync`, `ingest`,
+`run` and `uninstall` change configuration, schedulers or archive contents on
+the machine they run on. If something cannot be found, **report what you
+searched and stop** — do not add hosts, edit `config.toml`, or touch ssh keys to
+"fix" it. An empty result almost never means a machine is not collected (see
+below). Ask the user before changing any setup.
+
 ## Troubleshooting
 
 **A session from minutes ago is missing.** Ingestion runs on a timer (default
@@ -79,10 +100,26 @@ SSH shell gets a minimal PATH that usually omits `~/.local/bin`. Configure the
 absolute remote path once: `sessionhub remote set HOST --bin /abs/path/sessionhub`.
 Check with `sessionhub remote status`.
 
-**Search returns nothing for a phrase with punctuation.** Queries containing
-non-word characters are auto-quoted as an FTS phrase; try fewer, plainer words.
+**Search returns nothing.** The message lists what was searched. Each word
+(split on spaces) must appear, so fewer, plainer words work better; punctuation
+such as `mathking-cs` is searched as text. Korean nouns match with particles
+attached (`고객센터` finds `고객센터에서`). If the message says the conversation
+index is behind, the hub has not run since the upgrade — `sessionhub run` on
+the hub builds it once (about 20 s per 9,000 sessions). A word that appeared
+only in a tool call or tool output is not in the digest at all.
 
-**A machine's sessions are absent entirely.** `sessionhub status` lists the
-configured hosts and their last successful sync. A machine only appears once
-it has been added with `sessionhub add-host` on the hub and synced at least
-once.
+**`--local` shows 0 sessions.** A machine set up as a client keeps no archive
+of its own; its queries are forwarded to the hub named in `[remote_query]`.
+Its empty local database is normal. Drop `--local`.
+
+**A machine's sessions seem to be missing.** First run `sessionhub doctor`:
+it lists each label with the hostname and machine id behind it, how many
+sessions each has, and the last sync. A label is only a name in the config —
+the laptop you are typing on may be collected under a different name (for
+example `macpro`) than its hostname. `sessionhub status` shows the last sync per
+host. A machine only appears once it has been added with `sessionhub add-host`
+on the hub and synced at least once.
+
+**The same machine appears under two labels.** `doctor` reports it. `add-host`
+refuses to add a machine whose id is already collected (override with `--force`
+only if that is truly intended).

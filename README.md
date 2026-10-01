@@ -9,7 +9,7 @@ Search everything you've ever done with your coding agents.
 Your Claude Code and Codex sessions are already on disk — thousands of JSONL
 files you can't search. sessionhub turns them into one archive you can.
 
-- **Search across everything** — full-text over every session, by project, machine, or changed file.
+- **Search across everything** — full-text over every session's titles, summaries and conversation text, by project, machine, or changed file.
 - **Every machine, in sync** — Claude Code and Codex on all your machines pull into one archive on a timer; a laptop queries it over ssh.
 - **Tiny on disk** — keeps the trimmed conversation, not the raw logs. ~10 GB of transcripts → a few hundred MB.
 - **Ask, don't type** — installs a skill so your agent searches its own past for you.
@@ -74,6 +74,7 @@ DIGEST   the conversation, trimmed to what was actually said and gzipped
    │       remote machines send only this, over ssh — kilobytes, not gigabytes
    ▼
 INDEX    one small row per session: title, project, files, full-text search
+           (also over the conversation text, +~40% on disk — measured)
            plus a pointer back to where the full log lives
 ```
 
@@ -215,9 +216,11 @@ recent list search    find sessions
 show                  session detail (title, files, tags)
 raw [--full]          the conversation digest; --full for the untrimmed log
 stats status          totals · last refresh and errors
+doctor                which machine each label is; flags a machine collected twice
 run                   refresh now (reads local, pulls remote digests over ssh)
 compact               build digests from a legacy raw mirror, then free it
 add-host <alias>      pull another machine's sessions INTO this archive
+                      (refuses a machine that is already collected; --force overrides)
 remote set <host>     send this machine's queries OUT to an archive elsewhere
 remote install        write a short `shm` alias for the above
 skill install         (re)install the skill into Claude Code / Codex
