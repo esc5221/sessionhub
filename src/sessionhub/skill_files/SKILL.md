@@ -56,7 +56,9 @@ of the time against 23% without. When you already have exact names, paths or
 error text, search with those and leave `--expand` off — mixing in guessed
 queries pushed precise matches down.
 
-### Filters for `recent` / `list`
+### Filters for `recent` / `list` / `search`
+
+All three take the same filters:
 
 - `-d DAYS` time window, `-m MACHINE`, `-p PROJECT`, `-s SUBSYSTEM`, `-n LIMIT`
 - Listings print `project/subsystem` as one word (e.g. `turing/mathking`).
@@ -66,10 +68,14 @@ queries pushed precise matches down.
 - `-m` takes a machine **label** — a name from the hub's config, not
   necessarily the machine's hostname. `sessionhub doctor` shows which machine
   each label is.
-- By default only **interactive** sessions are shown. Subagent and exec
-  sessions are hidden because they are numerous and rarely what a person means
-  by "the session where…". Add `-a/--all` to include them, or
-  `--origin {interactive,subagent,exec}` to select one kind.
+- `recent` and `list` show only **interactive** sessions by default. Subagent
+  and exec sessions are hidden because they are numerous and rarely what a
+  person means by "the session where…". Add `-a/--all` to include them, or
+  `--origin {interactive,subagent,exec}` to select one kind. `search` already
+  covers every kind (`--interactive` narrows it; `-a` is accepted and changes
+  nothing).
+- `recent -d` defaults to 1 day; `list` and `search` have no time window unless
+  `-d` (or `search --since/--before`) is given.
 
 ## Typical flow
 
