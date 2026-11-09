@@ -604,9 +604,9 @@ def cmd_search(args: argparse.Namespace) -> int:
         return 0
     print(style.bold(f"search '{query}'") + style.dim(f"  ({total} found)"))
     print()
-    for r in rows:
+    for i, r in enumerate(rows):
         print(_row(r))
-        if not (args.tag or args.file) and not args.no_snippet:
+        if i < 10 and not (args.tag or args.file) and not args.no_snippet:
             snip = episodes_mod.best_title(conn, r["id"], search_mod.match_expr(query))
             snip = f"episode: {snip}" if snip else search_mod.snippet(conn, r["id"], query)
             if snip:
@@ -674,7 +674,9 @@ def cmd_show(args: argparse.Namespace) -> int:
         print()
         print(style.dim("episodes"))
         for e in eps:
-            _print_episode(e)
+            _print_episode(e, full=args.full)
+        if not args.full:
+            print(style.dim("\n  (fields are shortened; show --full for all of them, raw for the conversation)"))
     if row["files_changed"]:
         try:
             files = json.loads(row["files_changed"])
@@ -696,7 +698,9 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_episode(e) -> None:
+def _print_episode(e, *, full: bool = False) -> None:
+    """One episode as a short card. Agents read this in place of the conversation,
+    so every field is capped (full=True lifts the caps)."""
     when = ""
     if e["started_at"]:
         when = _fmt_time(e["started_at"])
@@ -705,19 +709,21 @@ def _print_episode(e) -> None:
             when += "–" + (end[6:] if end[:5] == when[:5] else end)
     print(f"  {e['seq'] + 1:>2}  " + style.dim(f"{when:<18}") + (e["title"] or "(untitled)"))
     pad = " " * 6
+    cap = 10_000 if full else 140
+    many = 10 if full else 3
 
     def field(label: str, value: str | None) -> None:
         if value:
-            print(pad + style.dim(f"{label:<8}") + _truncate(value, 220))
+            print(pad + style.dim(f"{label:<8}") + _truncate(value, cap))
 
     field("asked", e["ask"])
-    did = episodes_mod.loads(e["did"])
-    field("did", "; ".join(str(x) for x in did[:5]))
+    field("did", "; ".join(str(x) for x in episodes_mod.loads(e["did"])[:many]))
     field("result", e["outcome"])
     dec = [x for x in episodes_mod.loads(e["decisions"]) if isinstance(x, dict) and x.get("what")]
-    field("decided", "; ".join(str(x["what"]) for x in dec[:3]))
-    field("open", "; ".join(str(x) for x in episodes_mod.loads(e["open_items"])[:3]))
-    field("files", ", ".join(str(x) for x in episodes_mod.loads(e["artifacts"])[:6]))
+    field("decided", "; ".join(str(x["what"]) for x in dec[:many]))
+    if full:
+        field("open", "; ".join(str(x) for x in episodes_mod.loads(e["open_items"])[:many]))
+    field("files", ", ".join(str(x) for x in episodes_mod.loads(e["artifacts"])[:many]))
 
 
 def cmd_enrich(args: argparse.Namespace) -> int:
@@ -1151,7 +1157,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("query", nargs="+")
     s.add_argument("--tag", action="store_true")
     s.add_argument("--file", action="store_true")
-    s.add_argument("-n", "--limit", type=int, default=30, help="most results to show (default 30)")
+    s.add_argument("-n", "--limit", type=int, default=15, help="most results to show (default 15; best first)")
     s.add_argument("--newest", action="store_true", help="order matches by time instead of relevance")
     s.add_argument("--all-words", action="store_true", help="only sessions containing every word")
     s.add_argument("--any", action="append", metavar="QUERY", help="another phrasing of the same need; results are merged (repeatable)")
@@ -1194,6 +1200,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("show", help="session details, with what happened in each episode")
     s.add_argument("id")
     s.add_argument("--before", metavar="TIME", help="only episodes that started before TIME")
+    s.add_argument("--full", action="store_true", help="episode fields in full (default: shortened)")
     s.set_defaults(func=cmd_show)
 
     s = sub.add_parser("about", help="what is recorded about a name (repo, service, person...), over time")
