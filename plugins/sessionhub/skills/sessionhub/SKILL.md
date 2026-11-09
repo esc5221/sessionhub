@@ -20,9 +20,11 @@ column of every result listing.
 ## Commands
 
 ```
-sessionhub search "split brain"     full-text search; every word must appear
+sessionhub search relay pace cap    ranked full-text search; best match first
 sessionhub search --tag NAME        by tag
 sessionhub search --file PATH       sessions that touched a file path
+sessionhub search X --any "Y Z"     merge another phrasing of the same need
+sessionhub search X --since 2026-10-01 --before 2026-11-01
 sessionhub recent -d 3              last 3 days
 sessionhub list -p myproject -n 20  filter by project
 sessionhub list -m workstation      filter by machine
@@ -34,6 +36,16 @@ sessionhub status                   hub health: last sync, last ingest, errors
 sessionhub doctor                   which physical machine each label is; flags duplicates
 sessionhub tag <id-prefix> <tag>    tag a session for later recall
 ```
+
+### How `search` ranks
+
+Every word is optional: sessions with more of the words, and rarer ones, come
+first, and a typo or an extra word no longer empties the list. The best match
+is on top, not the newest (`--newest` orders by time, `--all-words` keeps only
+sessions with every word). Under each result is the line of the conversation
+that matched best (`↳ …`). Use the names, paths and error text you saw in this
+conversation as search words — they find more than a paraphrase of the request.
+`--json` prints machine-readable results.
 
 ### Filters for `recent` / `list`
 
@@ -100,10 +112,11 @@ SSH shell gets a minimal PATH that usually omits `~/.local/bin`. Configure the
 absolute remote path once: `sessionhub remote set HOST --bin /abs/path/sessionhub`.
 Check with `sessionhub remote status`.
 
-**Search returns nothing.** The message lists what was searched. Each word
-(split on spaces) must appear, so fewer, plainer words work better; punctuation
-such as `mathking-cs` is searched as text. Korean nouns match with particles
-attached (`고객센터` finds `고객센터에서`). If the message says the conversation
+**Search returns nothing.** The message lists what was searched. Try other
+words — names, file paths, error text; punctuation such as `mathking-cs` is
+searched as text. Korean words match without their particles (`고객센터를`
+finds `고객센터에서`); installing the optional `sessionhub[ko]` extra uses a
+morphological analyser for better stems. If the message says the conversation
 index is behind, the hub has not run since the upgrade — `sessionhub run` on
 the hub builds it once (about 20 s per 9,000 sessions). A word that appeared
 only in a tool call or tool output is not in the digest at all.

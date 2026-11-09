@@ -28,6 +28,9 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+# Better Korean word stems for search (morphological analyser). Optional: without
+# it, common particles are stripped by rule.
+ko = ["kiwipiepy>=0.18"]
 
 [project.scripts]
 sessionhub = "sessionhub.cli:main"
