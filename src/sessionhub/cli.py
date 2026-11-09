@@ -775,7 +775,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     res = episodes_mod.enrich(conn, cfg, limit=args.limit, session_ids=args.session or None,
                               retry_failed=args.retry_failed, dry_run=args.dry_run,
                               max_age_days=args.days, workers=args.workers or cfg.llm.enrich_workers,
-                              min_turns=args.min_turns, log=lambda m: print(m, flush=True))
+                              min_turns=args.min_turns, rebuild=args.rebuild, log=lambda m: print(m, flush=True))
     print(style.dim(f"enriched {res['enriched']}, failed {res['failed']}"))
     return 0 if not res["failed"] else 1
 
@@ -1272,6 +1272,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--days", type=float, help="only sessions that ended within this many days")
     s.add_argument("--workers", type=int, help="sessions processed at once (default [llm] enrich_workers, 4)")
     s.add_argument("--min-turns", type=int, default=2, help="skip sessions with fewer user messages (default 2)")
+    s.add_argument("--rebuild", action="store_true",
+                   help="redo a grown session whole (default: add episodes for its new turns only)")
     s.add_argument("--import", dest="import_dir", metavar="DIR", help="load episodes written elsewhere (<session-id>[__NN].json files)")
     s.set_defaults(func=cmd_enrich)
 
