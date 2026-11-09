@@ -25,7 +25,7 @@ sessionhub search --tag NAME        by tag
 sessionhub search --file PATH       sessions that touched a file path
 sessionhub search X --any "Y Z"     merge another phrasing of the same need
 sessionhub search X --since 2026-10-01 --before 2026-11-01
-sessionhub search "그거 다시" --expand  a small model adds search queries (costs one call)
+sessionhub search "그거 다시" --expand  a small model adds search queries (one model call)
 sessionhub recent -d 3              last 3 days
 sessionhub list -p myproject -n 20  filter by project
 sessionhub list -m workstation      filter by machine
@@ -49,6 +49,12 @@ sessions with every word). Under each result is the line of the conversation
 that matched best (`↳ …`). Use the names, paths and error text you saw in this
 conversation as search words — they find more than a paraphrase of the request.
 `--json` prints machine-readable results.
+
+`--expand` helps when all you have is the person's vague wording ("do that thing
+again"): from the bare request it found the right session in the top five 41%
+of the time against 23% without. When you already have exact names, paths or
+error text, search with those and leave `--expand` off — mixing in guessed
+queries pushed precise matches down.
 
 ### Filters for `recent` / `list`
 
