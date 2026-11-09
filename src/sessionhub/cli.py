@@ -318,7 +318,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # Episode cards for sessions that ended since the last run (calls the model).
         conn = connect(cfg.db_path)
         init_schema(conn)
-        e = episodes_mod.enrich(conn, cfg, limit=cfg.llm.enrich_per_run,
+        e = episodes_mod.enrich(conn, cfg, limit=cfg.llm.enrich_per_run, workers=cfg.llm.enrich_workers,
                                 max_age_days=cfg.llm.enrich_max_age_days, log=lambda m: print("  " + m))
         print(f"  enrich: {e['enriched']} sessions, {e['failed']} failed")
     return 0
@@ -741,7 +741,8 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         return 0
     res = episodes_mod.enrich(conn, cfg, limit=args.limit, session_ids=args.session or None,
                               retry_failed=args.retry_failed, dry_run=args.dry_run,
-                              max_age_days=args.days)
+                              max_age_days=args.days, workers=args.workers or cfg.llm.enrich_workers,
+                              min_turns=args.min_turns, log=lambda m: print(m, flush=True))
     print(style.dim(f"enriched {res['enriched']}, failed {res['failed']}"))
     return 0 if not res["failed"] else 1
 
@@ -1252,6 +1253,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--retry-failed", action="store_true", help="also retry sessions that failed 3 times")
     s.add_argument("--dry-run", action="store_true", help="list what would be enriched")
     s.add_argument("--days", type=float, help="only sessions that ended within this many days")
+    s.add_argument("--workers", type=int, help="sessions processed at once (default [llm] enrich_workers, 4)")
+    s.add_argument("--min-turns", type=int, default=2, help="skip sessions with fewer user messages (default 2)")
     s.add_argument("--import", dest="import_dir", metavar="DIR", help="load episodes written elsewhere (<session-id>[__NN].json files)")
     s.set_defaults(func=cmd_enrich)
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -286,14 +287,16 @@ def candidates(conn: sqlite3.Connection, *, limit: int, idle_minutes: int = 30,
            WHERE COALESCE(s.origin, 'interactive') = 'interactive' AND d.chars >= 400
              AND s.ended_at < ? AND s.ended_at >= ?
              AND (e.session_id IS NULL
-                  OR (e.status = 'done' AND d.chars > COALESCE(e.chars, 0) * 1.1)
+                  OR (e.status IN ('done', 'skipped') AND d.chars > COALESCE(e.chars, 0) * 1.1)
+                  OR (e.status = 'running' AND e.updated_at < datetime('now', '-3 hours'))
                   OR (e.status = 'failed' AND (? OR e.attempts < 3)))
            ORDER BY (e.session_id IS NOT NULL), s.ended_at DESC""",
         (cutoff, oldest, 1 if retry_failed else 0),
     ).fetchmany(limit * 5)
 
 
-def enrich_one(conn: sqlite3.Connection, cfg, session_id: str, text: str, ended_at: str | None) -> int:
+def write_cards(cfg, text: str) -> tuple[list[dict], Timeline, int]:
+    """Ask the model for a session's episodes, chunk by chunk. No database access (thread-safe)."""
     chunks, tl, n = split(text)
     episodes: list[dict] = []
     for ch in chunks:
@@ -302,6 +305,11 @@ def enrich_one(conn: sqlite3.Connection, cfg, session_id: str, text: str, ended_
         for e in data if isinstance(data, list) else data.get("episodes", []):
             if isinstance(e, dict):
                 episodes.append(e)
+    return episodes, tl, n
+
+
+def enrich_one(conn: sqlite3.Connection, cfg, session_id: str, text: str, ended_at: str | None) -> int:
+    episodes, tl, n = write_cards(cfg, text)
     count = store(conn, session_id, episodes, tl, f"llm:{llm_mod.model_label(cfg)}", session_end=ended_at)
     _mark(conn, session_id, "done", str(n), chars=len(text))
     return count
@@ -314,7 +322,8 @@ def _mark(conn, session_id: str, status: str, sig: str | None, error: str | None
            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
            ON CONFLICT(session_id) DO UPDATE SET status=excluded.status, sig=COALESCE(excluded.sig, sig),
              chars=COALESCE(excluded.chars, chars),
-             attempts=CASE WHEN excluded.status='failed' THEN attempts+1 ELSE 0 END,
+             attempts=CASE WHEN excluded.status='failed' THEN attempts+1
+                           WHEN excluded.status='running' THEN attempts ELSE 0 END,
              error=excluded.error, updated_at=excluded.updated_at""",
         (session_id, status, sig, chars, 1 if status == "failed" else 0, error),
     )
@@ -322,39 +331,61 @@ def _mark(conn, session_id: str, status: str, sig: str | None, error: str | None
 
 def enrich(conn: sqlite3.Connection, cfg, *, limit: int = 20, session_ids: list[str] | None = None,
            retry_failed: bool = False, dry_run: bool = False, max_age_days: float | None = None,
-           log=print) -> dict:
+           workers: int = 1, min_turns: int = 2, log=print) -> dict:
     """Write episodes for ended sessions that have none or have grown. Returns counts.
 
     max_age_days limits it to sessions that ended recently (the scheduled run uses
-    this so an archive full of old sessions is not back-filled by surprise)."""
+    this so an archive full of old sessions is not back-filled by surprise).
+    workers runs that many sessions' model calls at once; results are written one
+    at a time. Sessions are claimed ('running') first, so a scheduled run and a
+    manual back-fill do not pay twice for the same session. Sessions with fewer
+    than min_turns user messages (one-shot headless runs) are marked skipped.
+    """
     ensure(conn)
-    done = failed = skipped = 0
+    skipped = 0
+    jobs: list[tuple] = []
     for row in candidates(conn, limit=limit, session_ids=session_ids, retry_failed=retry_failed,
                           max_age_days=max_age_days):
-        if done + failed >= limit:
+        if len(jobs) >= limit:
             break
         text = digest_mod.decompress(row["bytes"])
         n = user_turns(text)
-        if not session_ids and row["status"] == "done" and row["sig"] == str(n):
+        if not session_ids and row["status"] in ("done", "skipped") and row["sig"] == str(n):
             skipped += 1
             continue
         if n == 0:
             continue
-        if dry_run:
-            log(f"would enrich {row['id'][:8]}  ({n} user turns)")
-            done += 1
+        if n < min_turns and not session_ids:
+            if not dry_run:
+                _mark(conn, row["id"], "skipped", str(n), chars=len(text) if text else None)
+            skipped += 1
             continue
-        try:
-            k = enrich_one(conn, cfg, row["id"], text, row["ended_at"])
-            conn.commit()
-            log(f"{row['id'][:8]}  {k} episodes")
-            done += 1
-        except Exception as e:  # one bad session must not stop the run
-            conn.rollback()
-            _mark(conn, row["id"], "failed", None, f"{type(e).__name__}: {e}"[:300])
-            conn.commit()
-            log(f"{row['id'][:8]}  failed: {type(e).__name__}: {str(e)[:120]}")
-            failed += 1
+        jobs.append((row["id"], row["ended_at"], text, n))
+    if dry_run:
+        for sid, _, _, n in jobs:
+            log(f"would enrich {sid[:8]}  ({n} user turns)")
+        return {"enriched": len(jobs), "failed": 0, "unchanged": skipped}
+    for sid, *_ in jobs:
+        _mark(conn, sid, "running", None)
+    conn.commit()
+    done = failed = 0
+    with ThreadPoolExecutor(max(1, workers)) as ex:
+        futures = {ex.submit(write_cards, cfg, text): (sid, ended, text) for sid, ended, text, _ in jobs}
+        for fut in as_completed(futures):
+            sid, ended, text = futures[fut]
+            try:
+                episodes, tl, n = fut.result()
+                k = store(conn, sid, episodes, tl, f"llm:{llm_mod.model_label(cfg)}", session_end=ended)
+                _mark(conn, sid, "done", str(n), chars=len(text))
+                conn.commit()
+                log(f"{sid[:8]}  {k} episodes")
+                done += 1
+            except Exception as e:  # one bad session must not stop the run
+                conn.rollback()
+                _mark(conn, sid, "failed", None, f"{type(e).__name__}: {e}"[:300])
+                conn.commit()
+                log(f"{sid[:8]}  failed: {type(e).__name__}: {str(e)[:120]}")
+                failed += 1
     return {"enriched": done, "failed": failed, "unchanged": skipped}
 
 
