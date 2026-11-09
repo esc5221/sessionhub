@@ -80,7 +80,9 @@ class RecallConfig:
     """
 
     mode: str = "cue"
-    expand: bool = True
+    # Model-written queries find more, but the hook blocks the request while it
+    # runs: measured end to end, ~15 s with them against ~1.7 s without.
+    expand: bool = False
     expand_timeout_s: int = 12
     timeout_s: int = 25
     max_cards: int = 4
@@ -185,7 +187,7 @@ def load(path: Path | None = None) -> Config:
     rc_raw = raw.get("recall", {})
     recall = RecallConfig(
         mode=str(rc_raw.get("mode", "cue")),
-        expand=bool(rc_raw.get("expand", True)),
+        expand=bool(rc_raw.get("expand", False)),
         expand_timeout_s=int(rc_raw.get("expand_timeout_s", 12)),
         timeout_s=int(rc_raw.get("timeout_s", 25)),
         max_cards=int(rc_raw.get("max_cards", 4)),
@@ -298,7 +300,7 @@ def dump(cfg: Config, path: Path | None = None) -> None:
         lines.append("")
 
     rc = cfg.recall
-    if (rc.mode, rc.expand, rc.expand_timeout_s, rc.timeout_s, rc.max_cards) != ("cue", True, 12, 25, 4):
+    if (rc.mode, rc.expand, rc.expand_timeout_s, rc.timeout_s, rc.max_cards) != ("cue", False, 12, 25, 4):
         lines.append("[recall]")
         lines.append(f"mode = {_quote(rc.mode)}")
         lines.append(f"expand = {'true' if rc.expand else 'false'}")

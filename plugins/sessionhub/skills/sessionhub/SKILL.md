@@ -101,7 +101,8 @@ request of a session, or one with a recall cue ("last time", "that one",
 "저번에", "그거"), it searches past episodes and adds up to four dated cards in
 front of the request. The cards are leads, not facts: they say what was true
 on their date. `[recall]` in config sets `mode = cue | always | off`; the hook
-logs each decision to `recall-hook.log` and never blocks a request.
+logs each decision to `recall-hook.log` and never fails a request. It takes
+about 2 s; `expand = true` adds model-written queries (finds more, ~15 s).
 
 ## Remote hubs
 
