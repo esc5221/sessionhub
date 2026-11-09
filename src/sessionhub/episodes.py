@@ -22,15 +22,13 @@ re-rendering digests (e.g. `ingest --full`) does not trigger a re-run.
 from __future__ import annotations
 
 import json
-import re
-import shlex
 import sqlite3
-import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sessionhub import digest as digest_mod
+from sessionhub import llm as llm_mod
 
 CHUNK_CHARS = 40000
 USER_CUT = 2500
@@ -168,35 +166,12 @@ def user_turns(text: str | None) -> int:
     return sum(1 for who, _, _ in digest_mod.parse_blocks(text) if who == "you")
 
 
-def _command(cfg, prompt: str) -> list[str]:
-    llm = getattr(cfg, "llm", None)
-    if llm and llm.command:
-        return shlex.split(llm.command)
-    model = llm.model if llm else "haiku"
-    return ["claude", "-p", "--model", model, "--output-format", "text", "--no-session-persistence",
-            "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands",
-            "--system-prompt", prompt]
-
-
 def call_llm(cfg, prompt: str, text: str) -> str:
-    """Run the configured LLM command: the prompt as system prompt (or prepended), text on stdin."""
-    cmd = _command(cfg, prompt)
-    custom = bool(getattr(cfg, "llm", None) and cfg.llm.command)
-    timeout = cfg.llm.timeout_s if getattr(cfg, "llm", None) else 300
-    p = subprocess.run(cmd, input=(prompt + "\n\n" + text) if custom else text,
-                       capture_output=True, text=True, timeout=timeout)
-    if p.returncode != 0:
-        raise RuntimeError((p.stderr or p.stdout or "llm failed").strip()[:300])
-    return p.stdout
+    return llm_mod.call(cfg, prompt, text)
 
 
 def parse_json(out: str) -> dict:
-    s = out.strip()
-    s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s)
-    start = s.find("{")
-    if start > 0:
-        s = s[start:]
-    return json.loads(s)
+    return llm_mod.parse_json(out)
 
 
 def _j(v) -> str:
@@ -286,8 +261,7 @@ def enrich_one(conn: sqlite3.Connection, cfg, session_id: str, text: str, ended_
         for e in data.get("episodes", []):
             if isinstance(e, dict):
                 episodes.append(e)
-    model = cfg.llm.model if getattr(cfg, "llm", None) and not cfg.llm.command else "custom"
-    count = store(conn, session_id, episodes, tl, f"llm:{model}", session_end=ended_at)
+    count = store(conn, session_id, episodes, tl, f"llm:{llm_mod.model_label(cfg)}", session_end=ended_at)
     _mark(conn, session_id, "done", str(n), chars=len(text))
     return count
 

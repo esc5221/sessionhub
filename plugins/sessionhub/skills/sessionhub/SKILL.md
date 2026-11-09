@@ -25,6 +25,7 @@ sessionhub search --tag NAME        by tag
 sessionhub search --file PATH       sessions that touched a file path
 sessionhub search X --any "Y Z"     merge another phrasing of the same need
 sessionhub search X --since 2026-10-01 --before 2026-11-01
+sessionhub search "그거 다시" --expand  a small model adds search queries (costs one call)
 sessionhub recent -d 3              last 3 days
 sessionhub list -p myproject -n 20  filter by project
 sessionhub list -m workstation      filter by machine

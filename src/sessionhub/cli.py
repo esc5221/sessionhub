@@ -18,6 +18,7 @@ from sessionhub import config as config_mod
 from sessionhub import digest as digest_mod
 from sessionhub import doctor as doctor_mod
 from sessionhub import episodes as episodes_mod
+from sessionhub import expand as expand_mod
 from sessionhub import ingest as ingest_mod
 from sessionhub import remote as remote_mod
 from sessionhub import search as search_mod
@@ -550,10 +551,13 @@ def cmd_search(args: argparse.Namespace) -> int:
         ).fetchall()
         total = len(rows)
     else:
+        extra = list(args.any or [])
+        if args.expand:
+            extra += _expanded(cfg, query, args.ctx_file)
         hits = search_mod.search(
             conn,
             query,
-            extra_queries=args.any or [],
+            extra_queries=extra,
             before=_iso_arg(args.before),
             since=_iso_arg(args.since),
             exclude=args.exclude or [],
@@ -604,6 +608,27 @@ def cmd_search(args: argparse.Namespace) -> int:
     if notes:
         print(style.dim("\n  " + "; ".join(notes)))
     return 0
+
+
+def _read_ctx(path: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        return sys.stdin.read() if path == "-" else Path(path).expanduser().read_text(errors="replace")
+    except OSError:
+        return None
+
+
+def _expanded(cfg, query: str, ctx_file: str | None) -> list[str]:
+    """Model-written queries for --expand; on failure, say so and search without them."""
+    try:
+        qs = expand_mod.queries(cfg, query, _read_ctx(ctx_file))
+    except Exception as e:  # the plain search must still work
+        print(style.dim(f"(--expand skipped: {type(e).__name__}: {str(e)[:80]})"), file=sys.stderr)
+        return []
+    if qs:
+        print(style.dim("expanded: " + " | ".join(qs)), file=sys.stderr)
+    return qs
 
 
 def cmd_show(args: argparse.Namespace) -> int:
@@ -1054,6 +1079,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--exclude", action="append", metavar="ID", help="leave out this session (id or prefix, repeatable)")
     s.add_argument("--json", action="store_true", help="machine-readable output")
     s.add_argument("--no-snippet", action="store_true", help="omit the matching line under each result")
+    s.add_argument("--expand", action="store_true", help="let a small model add search queries (see [llm] in config)")
+    s.add_argument("--ctx-file", metavar="PATH", help="end of the current conversation, to resolve 'that'/'last time' (- for stdin)")
     s.set_defaults(func=cmd_search)
 
     s = sub.add_parser("recent", help="recent sessions")
@@ -1194,6 +1221,24 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _strip_expand_flags(argv: list[str]) -> list[str]:
+    out: list[str] = []
+    skip = False
+    for a in argv:
+        if skip:
+            skip = False
+            continue
+        if a == "--expand":
+            continue
+        if a == "--ctx-file":
+            skip = True
+            continue
+        if a.startswith("--ctx-file="):
+            continue
+        out.append(a)
+    return out
+
+
 def _split_remote_flags(argv: list[str]) -> tuple[str | None, bool, list[str]]:
     """Pull --remote/--local out of argv before parsing.
 
@@ -1246,6 +1291,11 @@ def main(argv: list[str] | None = None) -> int:
             pass  # --remote/$SESSIONHUB_REMOTE work without any local config
         rq = remote_mod.resolve(cfg, host_flag, local_flag)
         if rq:
+            if args.cmd == "search" and getattr(args, "expand", False):
+                # The model runs here; the hub only receives the extra queries.
+                rest = _strip_expand_flags(rest) + [
+                    a for q in _expanded(cfg, " ".join(args.query), args.ctx_file) for a in ("--any", q)
+                ]
             return remote_mod.run(rq, rest)
 
     return args.func(args)

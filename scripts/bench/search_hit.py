@@ -69,13 +69,19 @@ def main() -> int:
     ap.add_argument("--mode", choices=["legacy", "ranked"], default="legacy")
     ap.add_argument("--extra", help="JSON object of keyword arguments for ranked mode")
     ap.add_argument("--dump", help="write per-scene results here (JSONL)")
+    ap.add_argument("--expand-cache", help="JSONL of model-written queries per scene (expand_cache.py), merged as extra queries")
     a = ap.parse_args()
 
     cfg = config_mod.load()
     conn = connect(cfg.db_path)
     have = {r[0][:8]: r[0] for r in conn.execute("SELECT id FROM sessions")}
     extra = json.loads(a.extra) if a.extra else {}
-    fn = legacy_ids if a.mode == "legacy" else (lambda c, q, b, e: ranked_ids(c, q, b, e, **extra))
+    cache = {}
+    if a.expand_cache:
+        for x in Path(a.expand_cache).read_text().splitlines():
+            if x.strip():
+                c = json.loads(x)
+                cache[(c["sid"], c["ts"])] = c["queries"]
 
     hits = {k: 0 for k in KS}
     n = 0
@@ -93,8 +99,12 @@ def main() -> int:
         n += 1
         before = s["ts"]
         best = None
+        more = cache.get((s["sid"], s["ts"]), [])
         for q in queries:
-            got = fn(conn, q, before, s["sid"])
+            if a.mode == "legacy":
+                got = legacy_ids(conn, q, before, s["sid"])
+            else:
+                got = ranked_ids(conn, q, before, s["sid"], extra_queries=more, **extra)
             for i, sid in enumerate(got[: max(KS)]):
                 if sid in gold:
                     best = i if best is None else min(best, i)
