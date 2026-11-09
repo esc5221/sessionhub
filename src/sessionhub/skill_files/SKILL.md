@@ -28,7 +28,7 @@ sessionhub search X --since 2026-10-01 --before 2026-11-01
 sessionhub recent -d 3              last 3 days
 sessionhub list -p myproject -n 20  filter by project
 sessionhub list -m workstation      filter by machine
-sessionhub show <id-prefix>         session detail (summary, files, tags)
+sessionhub show <id-prefix>         session detail, with a card per episode (asked/did/result/decided/files)
 sessionhub raw <id-prefix>          the conversation (trimmed digest)
 sessionhub raw --full <id-prefix>   the untrimmed log, in place (may ssh)
 sessionhub stats                    totals by source / machine / project
@@ -66,11 +66,15 @@ conversation as search words — they find more than a paraphrase of the request
 
 ```
 sessionhub search "auth refresh token"   # → note the 8-char id
-sessionhub show 2c24cdad                 # → summary, files touched
+sessionhub show 2c24cdad                 # → episode cards: what was asked, done, decided
 sessionhub raw 2c24cdad                  # → only if the detail isn't enough
 ```
 
-Prefer `show` over `raw`. `raw` prints the trimmed conversation (a digest);
+Prefer `show` over `raw`. When the hub has run `enrich`, `show` lists each
+episode of the session (one topic each) with its time, what was asked, what was
+done, how it ended, what was decided and which files changed — usually enough
+to act on without reading the conversation. Search results then also show the
+best-matching episode under each session (`↳ episode: …`). `raw` prints the trimmed conversation (a digest);
 read it only when the specific wording of an exchange matters. `raw --full`
 opens the complete original log, fetching it from the origin machine over ssh
 if that is where it lives.
@@ -94,7 +98,7 @@ hub by accident.
 ## Do not reconfigure the hub from an agent session
 
 `add-host`, `rm-host`, `remote set/unset`, `service`, `init`, `sync`, `ingest`,
-`run` and `uninstall` change configuration, schedulers or archive contents on
+`run`, `enrich` and `uninstall` change configuration, schedulers or archive contents on
 the machine they run on. If something cannot be found, **report what you
 searched and stop** — do not add hosts, edit `config.toml`, or touch ssh keys to
 "fix" it. An empty result almost never means a machine is not collected (see
