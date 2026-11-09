@@ -61,7 +61,7 @@ def _store_digest(conn: sqlite3.Connection, sess: ParsedSession, mode: str) -> N
     if sess.digest_text is not None:
         text: str | None = sess.digest_text or None
     else:
-        text = digest_mod.render(sess.digest_turns, mode)
+        text = digest_mod.render(sess.digest_turns, mode, sess.digest_times)
     blob = digest_mod.compress(text)
     if blob is None:
         return
@@ -305,7 +305,7 @@ def export_stream(cfg: Config, *, since: float, mode: str):
             if not session:
                 continue
             rec = {f: getattr(session, f) for f in _RECORD_FIELDS}
-            rec["digest"] = digest_mod.render(session.digest_turns, mode) or ""
+            rec["digest"] = digest_mod.render(session.digest_turns, mode, session.digest_times) or ""
             yield json.dumps(rec, ensure_ascii=False)
 
 

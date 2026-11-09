@@ -56,6 +56,7 @@ class ClaudeAdapter:
         user_messages: list[str] = []
         files_changed: set[str] = set()
         turns: list[tuple[str, str, str]] = []
+        times: list[str | None] = []
         token_in = 0
         token_out = 0
         timestamps: list[str] = []
@@ -72,6 +73,12 @@ class ClaudeAdapter:
                 if not cwd:
                     cwd = rec.get("cwd")
 
+            rts = rec.get("timestamp")
+
+            def keep(role: str, kind: str, text: str, _ts=rts) -> None:
+                turns.append((role, kind, text))
+                times.append(_ts)
+
             if rec_type == "user":
                 msg = rec.get("message", {})
                 content = msg.get("content", "")
@@ -79,14 +86,14 @@ class ClaudeAdapter:
                     t = content.strip()
                     if not is_boilerplate(t):
                         user_messages.append(t)
-                        turns.append(("user", "text", t))
+                        keep("user", "text", t)
                 elif isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "text":
                             t = block.get("text", "").strip()
                             if t and not is_boilerplate(t):
                                 user_messages.append(t)
-                                turns.append(("user", "text", t))
+                                keep("user", "text", t)
             elif rec_type == "assistant":
                 msg = rec.get("message", {})
                 usage = msg.get("usage", {})
@@ -104,7 +111,7 @@ class ClaudeAdapter:
                         if btype == "text":
                             t = block.get("text", "").strip()
                             if t:
-                                turns.append(("assistant", "text", t))
+                                keep("assistant", "text", t)
                         elif btype == "tool_use":
                             inp = block.get("input", {})
                             name = block.get("name", "tool")
@@ -123,7 +130,7 @@ class ClaudeAdapter:
                                         fp = fp[len(cwd):].lstrip("/")
                                     files_changed.add(fp)
                             if fp:
-                                turns.append(("assistant", "tool", f"{name} {fp}"[:200]))
+                                keep("assistant", "tool", f"{name} {fp}"[:200])
 
         if not session_id or not timestamps:
             return None
@@ -173,5 +180,6 @@ class ClaudeAdapter:
             raw_path=str(path),
             raw_mtime=mtime,
             digest_turns=turns,
+            digest_times=times,
             origin_path=str(path),
         )

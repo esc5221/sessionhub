@@ -56,6 +56,8 @@ class ParsedSession:
     # DIGEST source — ordered (role, kind, text) turns the digest is rendered
     # from. See sessionhub.digest. Empty when the source has no readable text.
     digest_turns: list[tuple[str, str, str]] = field(default_factory=list)
+    # Source timestamp of each digest turn (same order); None where unknown.
+    digest_times: list[str | None] = field(default_factory=list)
     # Pre-rendered digest text. Set when a session arrives already digested
     # (from a remote `export`); used instead of rendering digest_turns.
     digest_text: str | None = None

@@ -118,7 +118,8 @@ def update(conn: sqlite3.Connection, *, batch: int = 200) -> dict:
         blob = conn.execute(
             "SELECT bytes FROM digests WHERE session_id=?", (session_id,)
         ).fetchone()[0]
-        text = digest_mod.decompress(blob) or ""
+        # Turn times are for reading, not searching: keep them out of the index.
+        text = _TIME_LABEL.sub(r"\1:", digest_mod.decompress(blob) or "")
         if rid is None:
             cur = conn.execute(
                 f"INSERT INTO {MAP_TABLE} (session_id, sig) VALUES (?, ?)", (session_id, sig)
@@ -136,6 +137,7 @@ def update(conn: sqlite3.Connection, *, batch: int = 200) -> dict:
 
 
 _TOKEN = re.compile(r'"[^"]*"?|\S+')
+_TIME_LABEL = re.compile(r"^(you|agent) \[[0-9: -]+\]:$", re.M)
 
 
 def build_match(query: str, *, prefix_non_ascii: bool = False) -> str | None:
