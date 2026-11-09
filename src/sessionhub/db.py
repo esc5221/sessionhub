@@ -9,7 +9,7 @@ import sqlite3
 from importlib import resources
 from pathlib import Path
 
-from sessionhub import bodyindex
+from sessionhub import bodyindex, episodes
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -65,3 +65,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
     # Conversation-text index (created quietly; absent on a SQLite without contentless_delete)
     bodyindex.ensure(conn)
+    # Episode cards (written by `enrich`; empty until then)
+    episodes.ensure(conn)
+    if not _column_exists(conn, "enrich_state", "chars"):
+        conn.execute("ALTER TABLE enrich_state ADD COLUMN chars INTEGER")
+        conn.commit()

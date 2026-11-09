@@ -17,6 +17,7 @@ from sessionhub import __version__, bodyindex, style
 from sessionhub import config as config_mod
 from sessionhub import digest as digest_mod
 from sessionhub import doctor as doctor_mod
+from sessionhub import episodes as episodes_mod
 from sessionhub import ingest as ingest_mod
 from sessionhub import remote as remote_mod
 from sessionhub import search as search_mod
@@ -590,9 +591,10 @@ def cmd_search(args: argparse.Namespace) -> int:
     for r in rows:
         print(_row(r))
         if not (args.tag or args.file) and not args.no_snippet:
-            snip = search_mod.snippet(conn, r["id"], query)
+            snip = episodes_mod.best_title(conn, r["id"], search_mod.match_expr(query))
+            snip = f"episode: {snip}" if snip else search_mod.snippet(conn, r["id"], query)
             if snip:
-                print(style.dim(f"            ↳ {snip}"))
+                print(style.dim(f"            ↳ {_truncate(snip, 110)}"))
     notes = []
     if body_only:
         notes.append(f"{body_only} matched only in the conversation text")
@@ -630,6 +632,12 @@ def cmd_show(args: argparse.Namespace) -> int:
     if row["llm_summary"]:
         print()
         print(row["llm_summary"])
+    eps = episodes_mod.for_session(conn, row["id"], before=_iso_arg(getattr(args, "before", None)))
+    if eps:
+        print()
+        print(style.dim("episodes"))
+        for e in eps:
+            _print_episode(e)
     if row["files_changed"]:
         try:
             files = json.loads(row["files_changed"])
@@ -649,6 +657,48 @@ def cmd_show(args: argparse.Namespace) -> int:
     print()
     print(style.dim(f"raw      {row['raw_path'] or '?'}"))
     return 0
+
+
+def _print_episode(e) -> None:
+    when = ""
+    if e["started_at"]:
+        when = _fmt_time(e["started_at"])
+        if e["ended_at"] and e["ended_at"][:16] != e["started_at"][:16]:
+            end = _fmt_time(e["ended_at"])
+            when += "–" + (end[6:] if end[:5] == when[:5] else end)
+    print(f"  {e['seq'] + 1:>2}  " + style.dim(f"{when:<18}") + (e["title"] or "(untitled)"))
+    pad = " " * 6
+
+    def field(label: str, value: str | None) -> None:
+        if value:
+            print(pad + style.dim(f"{label:<8}") + _truncate(value, 220))
+
+    field("asked", e["ask"])
+    did = episodes_mod.loads(e["did"])
+    field("did", "; ".join(str(x) for x in did[:5]))
+    field("result", e["outcome"])
+    dec = [x for x in episodes_mod.loads(e["decisions"]) if isinstance(x, dict) and x.get("what")]
+    field("decided", "; ".join(str(x["what"]) for x in dec[:3]))
+    field("open", "; ".join(str(x) for x in episodes_mod.loads(e["open_items"])[:3]))
+    field("files", ", ".join(str(x) for x in episodes_mod.loads(e["artifacts"])[:6]))
+
+
+def cmd_enrich(args: argparse.Namespace) -> int:
+    """Write episode cards for ended sessions (calls an LLM; see [llm] in config)."""
+    cfg = _load_or_die()
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    if args.model:
+        cfg.llm.model = args.model
+    if args.import_dir:
+        res = episodes_mod.import_dir(conn, Path(args.import_dir).expanduser())
+        print(f"imported {res['episodes']} episodes for {res['sessions']} sessions"
+              + (f"; {res['not_in_archive']} sessions not in this archive" if res["not_in_archive"] else ""))
+        return 0
+    res = episodes_mod.enrich(conn, cfg, limit=args.limit, session_ids=args.session or None,
+                              retry_failed=args.retry_failed, dry_run=args.dry_run)
+    print(style.dim(f"enriched {res['enriched']}, failed {res['failed']}"))
+    return 0 if not res["failed"] else 1
 
 
 def cmd_raw(args: argparse.Namespace) -> int:
@@ -1031,8 +1081,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(func=cmd_list)
 
-    s = sub.add_parser("show", help="session details")
+    s = sub.add_parser("show", help="session details, with what happened in each episode")
     s.add_argument("id")
+    s.add_argument("--before", metavar="TIME", help="only episodes that started before TIME")
     s.set_defaults(func=cmd_show)
 
     s = sub.add_parser("raw", help="show a session's conversation (digest)")
@@ -1062,6 +1113,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("run", help="refresh the archive (scheduler entry)")
     s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("enrich", help="write episode cards for ended sessions (calls an LLM)")
+    s.add_argument("-n", "--limit", type=int, default=20, help="most sessions to enrich in this run (default 20)")
+    s.add_argument("--session", action="append", metavar="ID", help="enrich this session now (repeatable)")
+    s.add_argument("--model", help="model for the default claude command (default from [llm], haiku)")
+    s.add_argument("--retry-failed", action="store_true", help="also retry sessions that failed 3 times")
+    s.add_argument("--dry-run", action="store_true", help="list what would be enriched")
+    s.add_argument("--import", dest="import_dir", metavar="DIR", help="load episodes written elsewhere (<session-id>[__NN].json files)")
+    s.set_defaults(func=cmd_enrich)
 
     s = sub.add_parser("export", help="emit this machine's sessions as a digest stream")
     s.add_argument("--since", type=float, default=0.0, help="only sessions with mtime > this")

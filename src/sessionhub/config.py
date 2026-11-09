@@ -57,6 +57,20 @@ class RemoteQuery:
 
 
 @dataclass
+class LLMConfig:
+    """How `enrich`, `search --expand` and the recall hook call a model.
+
+    By default the Claude Code CLI (`claude -p`) with a small model. `command`
+    replaces it with any program that reads the prompt on stdin and prints the
+    answer (e.g. "llm -m gpt-4o-mini"); the instructions are prepended then.
+    """
+
+    model: str = "haiku"
+    command: str = ""
+    timeout_s: int = 300
+
+
+@dataclass
 class Config:
     db_path: Path
     raw_dir: Path
@@ -69,6 +83,7 @@ class Config:
     generic_components: list[str] = field(default_factory=list)
     remote_query: RemoteQuery | None = None
     digest_mode: str = "conversation"   # conversation | full | none
+    llm: LLMConfig = field(default_factory=LLMConfig)
 
     @property
     def config_path(self) -> Path:
@@ -141,6 +156,13 @@ def load(path: Path | None = None) -> Config:
     if digest_mode not in ("conversation", "full", "none"):
         digest_mode = "conversation"
 
+    llm_raw = raw.get("llm", {})
+    llm = LLMConfig(
+        model=str(llm_raw.get("model", "haiku")),
+        command=str(llm_raw.get("command", "")),
+        timeout_s=int(llm_raw.get("timeout_s", 300)),
+    )
+
     rq_raw = raw.get("remote_query", {})
     remote_query = None
     if rq_raw.get("host"):
@@ -158,6 +180,7 @@ def load(path: Path | None = None) -> Config:
         generic_components=generic_components,
         remote_query=remote_query,
         digest_mode=digest_mode,
+        llm=llm,
     )
 
 
@@ -230,6 +253,15 @@ def dump(cfg: Config, path: Path | None = None) -> None:
     lines.append("[digest]")
     lines.append(f"mode = {_quote(cfg.digest_mode)}")
     lines.append("")
+
+    if cfg.llm.model != "haiku" or cfg.llm.command or cfg.llm.timeout_s != 300:
+        lines.append("[llm]")
+        lines.append(f"model = {_quote(cfg.llm.model)}")
+        if cfg.llm.command:
+            lines.append(f"command = {_quote(cfg.llm.command)}")
+        if cfg.llm.timeout_s != 300:
+            lines.append(f"timeout_s = {cfg.llm.timeout_s}")
+        lines.append("")
 
     if cfg.remote_query:
         lines.append("[remote_query]")

@@ -144,7 +144,8 @@ def _ranked(conn: sqlite3.Connection, sql: str, expr: str) -> list[str]:
         return []
 
 
-def _lists_for(conn: sqlite3.Connection, query: str, all_words: bool) -> list[tuple[str, list[str]]]:
+def _lists_for(conn: sqlite3.Connection, query: str, all_words: bool,
+               use_episodes: bool = True) -> list[tuple[str, list[str]]]:
     expr = match_expr(query, all_words=all_words)
     if not expr:
         return []
@@ -162,13 +163,13 @@ def _lists_for(conn: sqlite3.Connection, query: str, all_words: bool) -> list[tu
                 expr,
             ),
         ))
-    for extra in EXTRA_SOURCES:
-        lists += extra(conn, expr)
+    if use_episodes:
+        from sessionhub import episodes as episodes_mod
+
+        ids = episodes_mod.ranked_sessions(conn, expr, POOL)
+        if ids:
+            lists.append(("episode", ids))
     return lists
-
-
-# Other modules (episodes) register more ranked lists here: fn(conn, expr) -> [(name, ids)].
-EXTRA_SOURCES: list = []
 
 
 def search(
@@ -183,6 +184,7 @@ def search(
     all_words: bool = False,
     tiered: bool = True,
     recency: float = 2.0,
+    use_episodes: bool = True,
     limit: int = 30,
 ) -> list[Hit]:
     """Sessions for `query` (plus `extra_queries`), best first.
@@ -192,7 +194,7 @@ def search(
     """
     scores: dict[str, Hit] = {}
     for q in [query, *extra_queries]:
-        for name, ids in _lists_for(conn, q, all_words):
+        for name, ids in _lists_for(conn, q, all_words, use_episodes):
             for rank, sid in enumerate(ids):
                 h = scores.get(sid)
                 if h is None:
@@ -205,7 +207,7 @@ def search(
     # top: a precise query should not be outranked by partial matches.
     full: set[str] = set()
     if tiered and not all_words and len(terms(query)) > 1:
-        for _, ids in _lists_for(conn, query, True):
+        for _, ids in _lists_for(conn, query, True, use_episodes):
             full.update(ids)
     rows = conn.execute(
         "SELECT id, started_at, origin FROM sessions WHERE id IN (SELECT value FROM json_each(?))",
