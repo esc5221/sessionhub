@@ -269,8 +269,10 @@ def _turn(e: dict, i: int) -> int | None:
 
 
 def candidates(conn: sqlite3.Connection, *, limit: int, idle_minutes: int = 30,
-               session_ids: list[str] | None = None, retry_failed: bool = False) -> list[sqlite3.Row]:
+               session_ids: list[str] | None = None, retry_failed: bool = False,
+               max_age_days: float | None = None) -> list[sqlite3.Row]:
     cutoff = (datetime.now(UTC) - timedelta(minutes=idle_minutes)).isoformat()
+    oldest = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat() if max_age_days else ""
     if session_ids:
         q = " OR ".join("s.id LIKE ?" for _ in session_ids)
         return conn.execute(
@@ -282,12 +284,12 @@ def candidates(conn: sqlite3.Connection, *, limit: int, idle_minutes: int = 30,
            JOIN digests d ON d.session_id = s.id
            LEFT JOIN enrich_state e ON e.session_id = s.id
            WHERE COALESCE(s.origin, 'interactive') = 'interactive' AND d.chars >= 400
-             AND s.ended_at < ?
+             AND s.ended_at < ? AND s.ended_at >= ?
              AND (e.session_id IS NULL
                   OR (e.status = 'done' AND d.chars > COALESCE(e.chars, 0) * 1.1)
                   OR (e.status = 'failed' AND (? OR e.attempts < 3)))
            ORDER BY (e.session_id IS NOT NULL), s.ended_at DESC""",
-        (cutoff, 1 if retry_failed else 0),
+        (cutoff, oldest, 1 if retry_failed else 0),
     ).fetchmany(limit * 5)
 
 
@@ -319,11 +321,16 @@ def _mark(conn, session_id: str, status: str, sig: str | None, error: str | None
 
 
 def enrich(conn: sqlite3.Connection, cfg, *, limit: int = 20, session_ids: list[str] | None = None,
-           retry_failed: bool = False, dry_run: bool = False, log=print) -> dict:
-    """Write episodes for ended sessions that have none or have grown. Returns counts."""
+           retry_failed: bool = False, dry_run: bool = False, max_age_days: float | None = None,
+           log=print) -> dict:
+    """Write episodes for ended sessions that have none or have grown. Returns counts.
+
+    max_age_days limits it to sessions that ended recently (the scheduled run uses
+    this so an archive full of old sessions is not back-filled by surprise)."""
     ensure(conn)
     done = failed = skipped = 0
-    for row in candidates(conn, limit=limit, session_ids=session_ids, retry_failed=retry_failed):
+    for row in candidates(conn, limit=limit, session_ids=session_ids, retry_failed=retry_failed,
+                          max_age_days=max_age_days):
         if done + failed >= limit:
             break
         text = digest_mod.decompress(row["bytes"])

@@ -154,8 +154,25 @@ def test_scheduled_run_enriches_when_configured(archive, tmp_path, capsys):
     cfg.llm.enrich_per_run = 5
     config_mod.dump(cfg)
     assert config_mod.load().llm.enrich_per_run == 5
-    add_session(conn, "efefefef-1", body=BODY, started="2026-11-01T10:00:00Z")
-    conn.execute("UPDATE sessions SET ended_at='2026-11-01T11:45:00Z'")
+    from datetime import UTC, datetime, timedelta
+
+    recent = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    add_session(conn, "efefefef-1", body=BODY, started=recent)
+    conn.execute("UPDATE sessions SET ended_at=?", (recent,))
     conn.commit()
     cli.main(["run"])
     assert "enrich: 1 sessions" in capsys.readouterr().out
+
+
+def test_scheduled_run_does_not_back_fill_old_sessions(archive, tmp_path, capsys):
+    cfg, conn = archive
+    fake_llm(tmp_path, cfg)
+    cfg.llm.enrich_per_run = 5
+    config_mod.dump(cfg)
+    add_session(conn, "0ld0ld00-1", body=BODY, started="2026-01-01T10:00:00Z")
+    conn.execute("UPDATE sessions SET ended_at='2026-01-01T11:45:00Z'")
+    conn.commit()
+    cli.main(["run"])
+    assert "enrich: 0 sessions" in capsys.readouterr().out
+    cli.main(["enrich"])  # an explicit run still reaches it
+    assert conn.execute("SELECT COUNT(*) FROM episodes WHERE session_id='0ld0ld00-1'").fetchone()[0] == 2
