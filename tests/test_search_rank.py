@@ -9,8 +9,8 @@ import json
 import re
 
 import pytest
-from tests import test_search_body as _base
 
+import test_search_body as _base  # tests/ is on sys.path under pytest
 from sessionhub import cli, search
 
 add_session = _base.add_session
