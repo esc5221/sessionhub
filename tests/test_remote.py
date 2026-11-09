@@ -157,3 +157,28 @@ def test_shim_keeps_a_module_style_exe_unquoted():
 def test_shim_defaults_to_the_running_interpreters_script(monkeypatch):
     monkeypatch.setattr("sessionhub.service.resolve_exe", lambda: "/resolved/sessionhub")
     assert "exec /resolved/sessionhub --remote hub" in remote.shim_source("hub")
+
+
+def test_full_remote_pull_gets_a_long_timeout(tmp_path, monkeypatch):
+    """A full re-pull re-reads every log on the far side; 10 minutes is not enough."""
+    import subprocess
+
+    from sessionhub import ingest
+    from sessionhub.config import Config, RemoteSource
+    from sessionhub.db import connect, init_schema
+
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["timeout"] = kw.get("timeout")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    cfg = Config(db_path=tmp_path / "h.db", raw_dir=tmp_path / "r", log_dir=tmp_path / "l")
+    conn = connect(cfg.db_path)
+    init_schema(conn)
+    r = RemoteSource(name="m", host="m", label="m")
+    ingest._ingest_remote(conn, cfg, r, ingest.ClassifyOpts(), full=True)
+    assert seen["timeout"] >= 3600
+    ingest._ingest_remote(conn, cfg, r, ingest.ClassifyOpts(), full=False)
+    assert seen["timeout"] >= 3600  # empty archive: since == 0 is a full pull too

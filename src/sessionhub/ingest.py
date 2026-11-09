@@ -337,8 +337,11 @@ def _ingest_remote(
     cmd = _remote_export_cmd(remote, since, cfg.digest_mode)
     started = _now()
     new = upd = err = 0
+    # An incremental pull is small; a full one re-reads every log on the far side
+    # (65k Claude sessions took ~35 minutes to parse on a laptop), so it gets hours.
+    timeout = 600 if since > 0 else 6 * 3600
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         _log_sync(conn, remote.name, started, "error", f"{type(e).__name__}: {e}")
         return 0, 0, 1
