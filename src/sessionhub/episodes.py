@@ -296,7 +296,8 @@ def enrich_one(conn: sqlite3.Connection, cfg, session_id: str, text: str, ended_
     episodes: list[dict] = []
     for ch in chunks:
         data = parse_json(call_llm(cfg, PROMPT, ch.text))
-        for e in data.get("episodes", []):
+        # Small models sometimes answer with the bare list instead of {"episodes": [...]}.
+        for e in data if isinstance(data, list) else data.get("episodes", []):
             if isinstance(e, dict):
                 episodes.append(e)
     count = store(conn, session_id, episodes, tl, f"llm:{llm_mod.model_label(cfg)}", session_end=ended_at)
@@ -364,7 +365,8 @@ def import_dir(conn: sqlite3.Connection, path: Path, *, log=print) -> dict:
             data = json.loads(f.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        by_sid.setdefault(sid, []).extend(e for e in data.get("episodes", []) if isinstance(e, dict))
+        eps = data if isinstance(data, list) else data.get("episodes", [])
+        by_sid.setdefault(sid, []).extend(e for e in eps if isinstance(e, dict))
     n_sess = n_ep = missing = 0
     for sid, eps in by_sid.items():
         row = conn.execute(

@@ -29,7 +29,7 @@ def queries(cfg, request: str, context: str | None = None, *, timeout: int = 60,
     text = (f"End of the current conversation:\n{context[-1500:]}\n\n" if context else "") + f"Request:\n{request[:2500]}"
     data = llm_mod.parse_json(llm_mod.call(cfg, PROMPT, text, timeout=timeout))
     out = []
-    for q in data.get("queries", []):
+    for q in data if isinstance(data, list) else data.get("queries", []):
         if isinstance(q, str) and q.strip() and q.strip() not in out:
             out.append(q.strip())
     return out[:limit]
