@@ -6,10 +6,14 @@ reading (benchmarks, the recall hook) must not show turns said later.
 
 import json
 
-from tests.test_search_body import add_session, archive, isolated  # noqa: F401
+from tests import test_search_body as _base
 
 from sessionhub import cli, digest
 from sessionhub.adapters import ClaudeAdapter
+
+add_session = _base.add_session
+archive = _base.archive
+isolated = _base.isolated
 
 TURNS = [("user", "text", "fix the login"), ("assistant", "tool", "Edit a.py"), ("assistant", "text", "done")]
 TIMES = ["2026-11-08T03:14:59.120Z", "2026-11-08T03:15:10Z", "2026-11-08T03:16:00Z"]
