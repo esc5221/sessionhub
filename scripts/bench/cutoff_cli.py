@@ -35,8 +35,9 @@ def _supports(cmd: str, flag: str) -> bool:
 
 
 def _visible(conn, prefix: str) -> bool:
+    # GLOB is case-sensitive, so the primary-key index serves the prefix match (LIKE scans).
     row = conn.execute(
-        "SELECT id, started_at FROM sessions WHERE id LIKE ?", (prefix + "%",)
+        "SELECT id, started_at FROM sessions WHERE id GLOB ?", (prefix + "*",)
     ).fetchone()
     return bool(row) and row["started_at"] < BEFORE and not row["id"].startswith(EXCLUDE or "\0")
 
