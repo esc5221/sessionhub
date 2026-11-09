@@ -47,9 +47,14 @@ def parse_json(out: str) -> dict | list:
     if not starts:
         return json.loads(s)
     start = min(starts)
-    close = "}" if s[start] == "{" else "]"
-    end = s.rfind(close)
-    return json.loads(s[start : end + 1] if end > start else s[start:])
+    try:
+        # The first complete JSON value; small models sometimes write a second one
+        # or a note after it ("Extra data").
+        return json.JSONDecoder().raw_decode(s[start:])[0]
+    except json.JSONDecodeError:
+        close = "}" if s[start] == "{" else "]"
+        end = s.rfind(close)
+        return json.loads(s[start : end + 1] if end > start else s[start:])
 
 
 def model_label(cfg) -> str:
