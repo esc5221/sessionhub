@@ -3,8 +3,7 @@ session and time, readable as of an earlier moment without later facts."""
 
 import re
 
-from tests import test_search_body as _base
-
+import test_search_body as _base  # tests/ is on sys.path under pytest
 from sessionhub import cli, episodes
 
 add_session = _base.add_session
