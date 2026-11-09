@@ -277,3 +277,27 @@ def test_rebuild_redoes_the_whole_session(archive, tmp_path, capsys):
     cli.main(["enrich", "--rebuild", "--session", "cccccccc"])
     titles = [r[0] for r in conn.execute("SELECT title FROM episodes WHERE session_id='cccccccc-8' ORDER BY seq")]
     assert "opus: all" not in titles and titles == ["relay pace cap", "login redirect bug"]
+
+
+def test_an_answer_with_trailing_text_or_a_second_object_is_read():
+    from sessionhub import llm
+    assert llm.parse_json('{"episodes": [{"title": "a"}]}\n{"episodes": []}') == {"episodes": [{"title": "a"}]}
+    assert llm.parse_json('```json\n{"episodes": []}\n```\nNote: one episode.') == {"episodes": []}
+
+
+def test_a_malformed_answer_is_asked_again_once(archive, tmp_path):
+    cfg, conn = archive
+    flag = tmp_path / "called"
+    script = tmp_path / "flaky_llm.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        f"p = pathlib.Path({str(flag)!r})\n"
+        "sys.stdin.read()\n"
+        "if not p.exists():\n"
+        "    p.write_text('1'); print('{\"episodes\": [{\"title\": \"x\",, }]}')\n"
+        "else:\n"
+        "    print('{\"episodes\": [{\"turns\": [1, 3], \"title\": \"second try\"}]}')\n")
+    cfg.llm.command = f"{sys.executable} {script}"
+    config_mod.dump(cfg)
+    eps, _, _ = episodes.write_cards(cfg, BODY)
+    assert [e["title"] for e in eps] == ["second try"]

@@ -343,7 +343,12 @@ def write_cards(cfg, text: str, start_after: int = 0) -> tuple[list[dict], Timel
     chunks, tl, n = split(text, start_after=start_after)
     episodes: list[dict] = []
     for ch in chunks:
-        data = parse_json(call_llm(cfg, PROMPT, ch.text))
+        try:
+            data = parse_json(call_llm(cfg, PROMPT, ch.text))
+        except json.JSONDecodeError:
+            # A long answer is occasionally malformed in the middle; asking again
+            # usually gives a clean one. A second failure fails the session.
+            data = parse_json(call_llm(cfg, PROMPT, ch.text))
         # Small models sometimes answer with the bare list instead of {"episodes": [...]}.
         for e in data if isinstance(data, list) else data.get("episodes", []):
             if isinstance(e, dict):
