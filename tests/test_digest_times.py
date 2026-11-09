@@ -6,8 +6,7 @@ reading (benchmarks, the recall hook) must not show turns said later.
 
 import json
 
-from tests import test_search_body as _base
-
+import test_search_body as _base  # tests/ is on sys.path under pytest
 from sessionhub import cli, digest
 from sessionhub.adapters import ClaudeAdapter
 
