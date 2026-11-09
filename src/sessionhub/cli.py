@@ -449,28 +449,66 @@ def _project_hint(conn, value: str | None, *, flag: str = "-p") -> str | None:
     return msg
 
 
-def cmd_recent(args: argparse.Namespace) -> int:
-    cfg = _load_or_die()
-    conn = _open_archive(cfg)
-    since = (_now_utc() - timedelta(days=args.days)).isoformat()
-    sql = "SELECT * FROM sessions WHERE started_at >= ?"
-    params: list = [since]
-    if not getattr(args, "all", False):
+def _listing_filters(s: argparse.ArgumentParser, *, days: int | None, limit: int | None = None,
+                     search: bool = False) -> None:
+    """The same filters on recent, list and search."""
+    s.add_argument("-d", "--days", type=int, default=days,
+                   help="only sessions started in the last DAYS days" + (f" (default {days})" if days else ""))
+    s.add_argument("-m", "--machine", help="machine label (see `sessionhub doctor`)")
+    s.add_argument("-p", "--project", help="project, subsystem, or project/subsystem")
+    s.add_argument("-s", "--subsystem")
+    if not search:
+        s.add_argument("-n", "--limit", type=int, default=limit,
+                       help="most sessions to list" + (f" (default {limit})" if limit else " (default: all)"))
+    s.add_argument("-a", "--all", action="store_true",
+                   help="every origin (search already covers every origin)" if search
+                   else "include subagent/exec sessions (default: interactive only)")
+    s.add_argument("--origin", choices=["interactive", "subagent", "exec"], help="only this origin")
+
+
+def _filter_sql(args: argparse.Namespace, *, default_interactive: bool = True) -> tuple[str, list]:
+    """WHERE clauses shared by recent, list and search: -d -m -p -s -a --origin.
+
+    Agents type the same filters on every listing command (the skill lists them
+    together), so all three accept them instead of failing on an unknown flag.
+    """
+    sql, params = "", []
+    origin = getattr(args, "origin", None)
+    if origin:
+        sql += " AND origin = ?"
+        params.append(origin)
+    elif default_interactive and not getattr(args, "all", False):
         sql += " AND origin = 'interactive'"
-    if args.machine:
+    days = getattr(args, "days", None)
+    if days:
+        sql += " AND started_at >= ?"
+        params.append((_now_utc() - timedelta(days=days)).isoformat())
+    if getattr(args, "machine", None):
         sql += " AND machine = ?"
         params.append(args.machine)
-    if args.project:
+    if getattr(args, "project", None):
         clause, extra = _project_clause(args.project)
         sql += f" AND {clause}"
         params += extra
-    sql += " ORDER BY started_at DESC"
+    if getattr(args, "subsystem", None):
+        sql += " AND subsystem = ? COLLATE NOCASE"
+        params.append(args.subsystem)
+    return sql, params
+
+
+def cmd_recent(args: argparse.Namespace) -> int:
+    cfg = _load_or_die()
+    conn = _open_archive(cfg)
+    clause, params = _filter_sql(args)
+    sql = "SELECT * FROM sessions WHERE 1=1" + clause + " ORDER BY started_at DESC"
+    if args.limit:
+        sql += f" LIMIT {int(args.limit)}"
     rows = conn.execute(sql, params).fetchall()
     if not rows:
         print(f"no sessions in last {args.days} day(s).")
-        hint = _project_hint(conn, args.project)
-        if hint:
-            print(hint)
+        for hint in (_project_hint(conn, args.project), _project_hint(conn, args.subsystem, flag="-s")):
+            if hint:
+                print(hint)
         return 0
     print(style.bold(f"recent (last {args.days}d)"))
     print()
@@ -483,24 +521,8 @@ def cmd_recent(args: argparse.Namespace) -> int:
 def cmd_list(args: argparse.Namespace) -> int:
     cfg = _load_or_die()
     conn = _open_archive(cfg)
-    sql = "SELECT * FROM sessions WHERE 1=1"
-    params: list = []
-    if not getattr(args, "all", False) and not getattr(args, "origin", None):
-        sql += " AND origin = 'interactive'"
-    elif getattr(args, "origin", None):
-        sql += " AND origin = ?"
-        params.append(args.origin)
-    if args.project:
-        clause, extra = _project_clause(args.project)
-        sql += f" AND {clause}"
-        params += extra
-    if args.subsystem:
-        sql += " AND subsystem = ?"
-        params.append(args.subsystem)
-    if args.machine:
-        sql += " AND machine = ?"
-        params.append(args.machine)
-    sql += f" ORDER BY started_at DESC LIMIT {int(args.limit)}"
+    clause, params = _filter_sql(args)
+    sql = "SELECT * FROM sessions WHERE 1=1" + clause + f" ORDER BY started_at DESC LIMIT {int(args.limit)}"
     rows = conn.execute(sql, params).fetchall()
     if not rows:
         print("no sessions found.")
@@ -546,38 +568,46 @@ def cmd_search(args: argparse.Namespace) -> int:
             """
             SELECT s.* FROM sessions s
             JOIN session_tags st ON s.id = st.session_id
-            WHERE st.tag = ?
+            WHERE st.tag = ?""" + _filter_sql(args, default_interactive=False)[0].replace(" AND ", " AND s.") + """
             ORDER BY s.started_at DESC
             """,
-            (query,),
+            [query, *_filter_sql(args, default_interactive=False)[1]],
         ).fetchall()
         total = len(rows)
     elif args.file:
         rows = conn.execute(
-            "SELECT * FROM sessions WHERE files_changed LIKE ? ORDER BY started_at DESC",
-            (f"%{query}%",),
+            "SELECT * FROM sessions WHERE files_changed LIKE ?" + _filter_sql(args, default_interactive=False)[0]
+            + " ORDER BY started_at DESC",
+            [f"%{query}%", *_filter_sql(args, default_interactive=False)[1]],
         ).fetchall()
         total = len(rows)
     else:
         extra = list(args.any or [])
         if args.expand:
             extra += _expanded(cfg, query, args.ctx_file)
+        since = _iso_arg(args.since)
+        if args.days and not since:
+            since = (_now_utc() - timedelta(days=args.days)).isoformat()
         hits = search_mod.search(
             conn,
             query,
             extra_queries=extra,
             before=_iso_arg(args.before),
-            since=_iso_arg(args.since),
+            since=since,
             exclude=args.exclude or [],
             interactive_only=args.interactive,
             all_words=args.all_words,
             limit=2000,
         )
         by_id = {h.session_id: h for h in hits}
+        clause, fparams = _filter_sql(args, default_interactive=False)
         rows = conn.execute(
-            "SELECT * FROM sessions WHERE id IN (SELECT value FROM json_each(?))",
-            (json.dumps(list(by_id)),),
+            "SELECT * FROM sessions WHERE id IN (SELECT value FROM json_each(?))" + clause,
+            [json.dumps(list(by_id)), *fparams],
         ).fetchall()
+        if clause:
+            kept = {r["id"] for r in rows}
+            hits = [h for h in hits if h.session_id in kept]
         if args.newest:
             rows.sort(key=lambda r: r["started_at"] or "", reverse=True)
         else:
@@ -602,6 +632,9 @@ def cmd_search(args: argparse.Namespace) -> int:
             print(f"no results for '{query}'.")
         else:
             _zero_result_help(conn, query)
+        for hint in (_project_hint(conn, args.project), _project_hint(conn, args.subsystem, flag="-s")):
+            if hint:
+                print(hint)
         return 0
     print(style.bold(f"search '{query}'") + style.dim(f"  ({total} found)"))
     print()
@@ -1173,31 +1206,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--cards", action="store_true", help="with --json: each result's best-matching episode card")
     s.add_argument("--expand", action="store_true", help="let a small model add search queries (see [llm] in config)")
     s.add_argument("--ctx-file", metavar="PATH", help="end of the current conversation, to resolve 'that'/'last time' (- for stdin)")
+    _listing_filters(s, days=None, search=True)
     s.set_defaults(func=cmd_search)
 
     s = sub.add_parser("recent", help="recent sessions")
-    s.add_argument("-d", "--days", type=int, default=1)
-    s.add_argument("-m", "--machine", help="machine label (see `sessionhub doctor`)")
-    s.add_argument("-p", "--project", help="project, subsystem, or project/subsystem")
-    s.add_argument(
-        "-a", "--all", action="store_true",
-        help="include subagent/exec sessions (default: interactive only)",
-    )
+    _listing_filters(s, days=1, limit=None)
     s.set_defaults(func=cmd_recent)
 
     s = sub.add_parser("list", help="filtered session list")
-    s.add_argument("-p", "--project", help="project, subsystem, or project/subsystem")
-    s.add_argument("-s", "--subsystem")
-    s.add_argument("-m", "--machine", help="machine label (see `sessionhub doctor`)")
-    s.add_argument("-n", "--limit", type=int, default=20)
-    s.add_argument(
-        "-a", "--all", action="store_true",
-        help="include subagent/exec sessions (default: interactive only)",
-    )
-    s.add_argument(
-        "--origin", choices=["interactive", "subagent", "exec"],
-        help="show only this origin",
-    )
+    _listing_filters(s, days=None, limit=20)
     s.set_defaults(func=cmd_list)
 
     s = sub.add_parser("show", help="session details, with what happened in each episode")
