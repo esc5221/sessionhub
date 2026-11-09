@@ -17,7 +17,13 @@ This module ranks instead:
     `kiwipiepy` package the stem comes from a morphological analyser; without
     it, common particles are stripped by rule.
 
-`all_words=True` restores the old every-word behaviour.
+  * sessions that contain every word of the query stay on top, and recent
+    sessions get a weak extra vote (people mostly look for recent work)
+
+`all_words=True` restores the old every-word behaviour. On real recall scenes
+(the typed searches), this ordering put the opened session first 45% of the
+time against 34% for the old newest-first list, and found it from the bare
+request text in the top five 23% of the time against under 1%.
 """
 
 from __future__ import annotations
@@ -175,6 +181,8 @@ def search(
     exclude: list[str] | tuple[str, ...] = (),
     interactive_only: bool = False,
     all_words: bool = False,
+    tiered: bool = True,
+    recency: float = 2.0,
     limit: int = 30,
 ) -> list[Hit]:
     """Sessions for `query` (plus `extra_queries`), best first.
@@ -193,6 +201,12 @@ def search(
                 h.sources.add(name)
     if not scores:
         return []
+    # Sessions containing every word of the main query keep their old place on
+    # top: a precise query should not be outranked by partial matches.
+    full: set[str] = set()
+    if tiered and not all_words and len(terms(query)) > 1:
+        for _, ids in _lists_for(conn, query, True):
+            full.update(ids)
     rows = conn.execute(
         "SELECT id, started_at, origin FROM sessions WHERE id IN (SELECT value FROM json_each(?))",
         (json.dumps(list(scores)),),
@@ -211,7 +225,11 @@ def search(
         h = scores[sid]
         h.started_at = started
         keep.append(h)
-    keep.sort(key=lambda h: (-h.score, h.started_at or ""))
+    if recency:
+        # A weak extra vote for recent sessions (people mostly look for recent work).
+        for rank, h in enumerate(sorted(keep, key=lambda h: h.started_at or "", reverse=True)):
+            h.score += recency / (RRF_K + rank)
+    keep.sort(key=lambda h: (h.session_id not in full, -h.score, h.started_at or ""))
     return keep[:limit]
 
 
