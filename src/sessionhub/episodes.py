@@ -271,28 +271,39 @@ def _turn(e: dict, i: int) -> int | None:
 
 def candidates(conn: sqlite3.Connection, *, limit: int, idle_minutes: int = 30,
                session_ids: list[str] | None = None, retry_failed: bool = False,
-               max_age_days: float | None = None) -> list[sqlite3.Row]:
+               max_age_days: float | None = None):
+    """Sessions that may need cards, newest first, with their digest loaded one at a time.
+
+    The id list is read whole (it is small), not capped: an archive can hold tens of
+    thousands of one-shot headless runs that are skipped only after the digest is
+    read, and a cap filled with them hid the sessions that do need cards.
+    """
     cutoff = (datetime.now(UTC) - timedelta(minutes=idle_minutes)).isoformat()
     oldest = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat() if max_age_days else ""
     if session_ids:
         q = " OR ".join("s.id LIKE ?" for _ in session_ids)
-        return conn.execute(
-            f"SELECT s.id, s.ended_at, d.bytes FROM sessions s JOIN digests d ON d.session_id=s.id WHERE {q}",
+        ids = conn.execute(
+            f"SELECT s.id, s.ended_at, NULL, NULL, NULL FROM sessions s JOIN digests d ON d.session_id=s.id WHERE {q}",
             [x + "%" for x in session_ids],
         ).fetchall()
-    return conn.execute(
-        """SELECT s.id, s.ended_at, d.bytes, d.chars, e.status, e.sig, e.attempts FROM sessions s
-           JOIN digests d ON d.session_id = s.id
-           LEFT JOIN enrich_state e ON e.session_id = s.id
-           WHERE COALESCE(s.origin, 'interactive') = 'interactive' AND d.chars >= 400
-             AND s.ended_at < ? AND s.ended_at >= ?
-             AND (e.session_id IS NULL
-                  OR (e.status IN ('done', 'skipped') AND d.chars > COALESCE(e.chars, 0) * 1.1)
-                  OR (e.status = 'running' AND e.updated_at < datetime('now', '-3 hours'))
-                  OR (e.status = 'failed' AND (? OR e.attempts < 3)))
-           ORDER BY (e.session_id IS NOT NULL), s.ended_at DESC""",
-        (cutoff, oldest, 1 if retry_failed else 0),
-    ).fetchmany(limit * 5)
+    else:
+        ids = conn.execute(
+            """SELECT s.id, s.ended_at, e.status, e.sig, e.attempts FROM sessions s
+               JOIN digests d ON d.session_id = s.id
+               LEFT JOIN enrich_state e ON e.session_id = s.id
+               WHERE COALESCE(s.origin, 'interactive') = 'interactive' AND d.chars >= 400
+                 AND s.ended_at < ? AND s.ended_at >= ?
+                 AND (e.session_id IS NULL
+                      OR (e.status IN ('done', 'skipped') AND d.chars > COALESCE(e.chars, 0) * 1.1)
+                      OR (e.status = 'running' AND e.updated_at < datetime('now', '-3 hours'))
+                      OR (e.status = 'failed' AND (? OR e.attempts < 3)))
+               ORDER BY (e.session_id IS NOT NULL), s.ended_at DESC""",
+            (cutoff, oldest, 1 if retry_failed else 0),
+        ).fetchall()
+    for sid, ended, status, sig, attempts in ids:
+        row = conn.execute("SELECT bytes FROM digests WHERE session_id=?", (sid,)).fetchone()
+        if row:
+            yield {"id": sid, "ended_at": ended, "bytes": row[0], "status": status, "sig": sig, "attempts": attempts}
 
 
 def write_cards(cfg, text: str) -> tuple[list[dict], Timeline, int]:

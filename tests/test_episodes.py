@@ -204,3 +204,17 @@ def test_a_claimed_session_is_not_picked_twice(archive):
     episodes._mark(conn, "c1c1c1c1-p", "running", None)
     conn.commit()
     assert [r["id"] for r in episodes.candidates(conn, limit=5)] == []
+
+
+def test_many_one_shot_runs_do_not_hide_sessions_that_need_cards(archive, tmp_path):
+    cfg, conn = archive
+    fake_llm(tmp_path, cfg)
+    one = digest.render([("user", "text", "judge this " * 60), ("assistant", "text", "ok")], "conversation")
+    for i in range(30):
+        add_session(conn, f"h{i:07d}-x", body=one, started=f"2026-11-05T10:{i:02d}:00Z")
+    add_session(conn, "realreal-x", body=BODY, started="2026-11-01T10:00:00Z")
+    conn.execute("UPDATE sessions SET ended_at=started_at")
+    conn.commit()
+    res = episodes.enrich(conn, cfg, limit=1, log=lambda m: None)
+    assert res["enriched"] == 1
+    assert conn.execute("SELECT status FROM enrich_state WHERE session_id='realreal-x'").fetchone()[0] == "done"
