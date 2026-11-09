@@ -68,6 +68,8 @@ class LLMConfig:
     model: str = "haiku"
     command: str = ""
     timeout_s: int = 300
+    effort: str = "low"   # passed as --effort to the default claude command ("" to omit)
+    enrich_per_run: int = 0   # >0: each scheduled `run` also enriches up to this many ended sessions
 
 
 @dataclass
@@ -78,7 +80,9 @@ class RecallConfig:
     """
 
     mode: str = "cue"
-    expand: bool = True
+    # Model-written queries find more, but the hook blocks the request while it
+    # runs: measured end to end, ~15 s with them against ~1.7 s without.
+    expand: bool = False
     expand_timeout_s: int = 12
     timeout_s: int = 25
     max_cards: int = 4
@@ -176,12 +180,14 @@ def load(path: Path | None = None) -> Config:
         model=str(llm_raw.get("model", "haiku")),
         command=str(llm_raw.get("command", "")),
         timeout_s=int(llm_raw.get("timeout_s", 300)),
+        effort=str(llm_raw.get("effort", "low")),
+        enrich_per_run=int(llm_raw.get("enrich_per_run", 0)),
     )
 
     rc_raw = raw.get("recall", {})
     recall = RecallConfig(
         mode=str(rc_raw.get("mode", "cue")),
-        expand=bool(rc_raw.get("expand", True)),
+        expand=bool(rc_raw.get("expand", False)),
         expand_timeout_s=int(rc_raw.get("expand_timeout_s", 12)),
         timeout_s=int(rc_raw.get("timeout_s", 25)),
         max_cards=int(rc_raw.get("max_cards", 4)),
@@ -279,17 +285,22 @@ def dump(cfg: Config, path: Path | None = None) -> None:
     lines.append(f"mode = {_quote(cfg.digest_mode)}")
     lines.append("")
 
-    if cfg.llm.model != "haiku" or cfg.llm.command or cfg.llm.timeout_s != 300:
+    if (cfg.llm.model != "haiku" or cfg.llm.command or cfg.llm.timeout_s != 300 or cfg.llm.effort != "low"
+            or cfg.llm.enrich_per_run):
         lines.append("[llm]")
         lines.append(f"model = {_quote(cfg.llm.model)}")
         if cfg.llm.command:
             lines.append(f"command = {_quote(cfg.llm.command)}")
         if cfg.llm.timeout_s != 300:
             lines.append(f"timeout_s = {cfg.llm.timeout_s}")
+        if cfg.llm.effort != "low":
+            lines.append(f"effort = {_quote(cfg.llm.effort)}")
+        if cfg.llm.enrich_per_run:
+            lines.append(f"enrich_per_run = {cfg.llm.enrich_per_run}")
         lines.append("")
 
     rc = cfg.recall
-    if (rc.mode, rc.expand, rc.expand_timeout_s, rc.timeout_s, rc.max_cards) != ("cue", True, 12, 25, 4):
+    if (rc.mode, rc.expand, rc.expand_timeout_s, rc.timeout_s, rc.max_cards) != ("cue", False, 12, 25, 4):
         lines.append("[recall]")
         lines.append(f"mode = {_quote(rc.mode)}")
         lines.append(f"expand = {'true' if rc.expand else 'false'}")

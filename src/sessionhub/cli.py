@@ -314,6 +314,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"[{_now_utc().isoformat()}] sessionhub run")
     r = ingest_mod.ingest_all(cfg, full=False)
     print(f"  done: new={r['new']} updated={r['updated']} errors={r['errors']}")
+    if cfg.llm.enrich_per_run > 0:
+        # Episode cards for sessions that ended since the last run (calls the model).
+        conn = connect(cfg.db_path)
+        init_schema(conn)
+        e = episodes_mod.enrich(conn, cfg, limit=cfg.llm.enrich_per_run, log=lambda m: print("  " + m))
+        print(f"  enrich: {e['enriched']} sessions, {e['failed']} failed")
     return 0
 
 
@@ -598,9 +604,9 @@ def cmd_search(args: argparse.Namespace) -> int:
         return 0
     print(style.bold(f"search '{query}'") + style.dim(f"  ({total} found)"))
     print()
-    for r in rows:
+    for i, r in enumerate(rows):
         print(_row(r))
-        if not (args.tag or args.file) and not args.no_snippet:
+        if i < 10 and not (args.tag or args.file) and not args.no_snippet:
             snip = episodes_mod.best_title(conn, r["id"], search_mod.match_expr(query))
             snip = f"episode: {snip}" if snip else search_mod.snippet(conn, r["id"], query)
             if snip:
@@ -668,7 +674,9 @@ def cmd_show(args: argparse.Namespace) -> int:
         print()
         print(style.dim("episodes"))
         for e in eps:
-            _print_episode(e)
+            _print_episode(e, full=args.full)
+        if not args.full:
+            print(style.dim("\n  (fields are shortened; show --full for all of them, raw for the conversation)"))
     if row["files_changed"]:
         try:
             files = json.loads(row["files_changed"])
@@ -690,7 +698,9 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_episode(e) -> None:
+def _print_episode(e, *, full: bool = False) -> None:
+    """One episode as a short card. Agents read this in place of the conversation,
+    so every field is capped (full=True lifts the caps)."""
     when = ""
     if e["started_at"]:
         when = _fmt_time(e["started_at"])
@@ -699,19 +709,21 @@ def _print_episode(e) -> None:
             when += "–" + (end[6:] if end[:5] == when[:5] else end)
     print(f"  {e['seq'] + 1:>2}  " + style.dim(f"{when:<18}") + (e["title"] or "(untitled)"))
     pad = " " * 6
+    cap = 10_000 if full else 140
+    many = 10 if full else 3
 
     def field(label: str, value: str | None) -> None:
         if value:
-            print(pad + style.dim(f"{label:<8}") + _truncate(value, 220))
+            print(pad + style.dim(f"{label:<8}") + _truncate(value, cap))
 
     field("asked", e["ask"])
-    did = episodes_mod.loads(e["did"])
-    field("did", "; ".join(str(x) for x in did[:5]))
+    field("did", "; ".join(str(x) for x in episodes_mod.loads(e["did"])[:many]))
     field("result", e["outcome"])
     dec = [x for x in episodes_mod.loads(e["decisions"]) if isinstance(x, dict) and x.get("what")]
-    field("decided", "; ".join(str(x["what"]) for x in dec[:3]))
-    field("open", "; ".join(str(x) for x in episodes_mod.loads(e["open_items"])[:3]))
-    field("files", ", ".join(str(x) for x in episodes_mod.loads(e["artifacts"])[:6]))
+    field("decided", "; ".join(str(x["what"]) for x in dec[:many]))
+    if full:
+        field("open", "; ".join(str(x) for x in episodes_mod.loads(e["open_items"])[:many]))
+    field("files", ", ".join(str(x) for x in episodes_mod.loads(e["artifacts"])[:many]))
 
 
 def cmd_enrich(args: argparse.Namespace) -> int:
@@ -730,6 +742,58 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                               retry_failed=args.retry_failed, dry_run=args.dry_run)
     print(style.dim(f"enriched {res['enriched']}, failed {res['failed']}"))
     return 0 if not res["failed"] else 1
+
+
+def cmd_about(args: argparse.Namespace) -> int:
+    """What the archive knows about a name: spellings, when it appears, and in which episodes."""
+    cfg = _load_or_die()
+    conn = _open_archive(cfg)
+    if not episodes_mod.available(conn):
+        print("no episodes in this archive yet (the hub writes them with `sessionhub enrich`).")
+        return 1
+    res = episodes_mod.about(conn, " ".join(args.name), before=_iso_arg(args.before), limit=args.limit)
+    if not res["mentions"]:
+        print(f"nothing recorded about '{' '.join(args.name)}'. Try `sessionhub search`.")
+        return 0
+    print(style.bold(res["spellings"][0]) + style.dim(f"  ({', '.join(res['types'][:3])})" if res["types"] else ""))
+    if len(res["spellings"]) > 1:
+        print(style.dim("also written ") + ", ".join(res["spellings"][1:8]))
+    print(style.dim(f"{res['mentions']} mentions, {_fmt_time(res['first'])} to {_fmt_time(res['last'])}"))
+    print()
+    for it in res["items"]:
+        print(f"  {style.sid(_short_id(it['session_id']))}  " + style.dim(f"{_fmt_time(it['started_at']):<12}")
+              + f"{_truncate(it['episode'] or '', 70)}")
+        if it["note"]:
+            print(style.dim(f"            {_truncate(it['note'], 140)}"))
+    return 0
+
+
+def cmd_stream(args: argparse.Namespace) -> int:
+    """A line of work over time: its episodes in order and where it stood last."""
+    cfg = _load_or_die()
+    conn = _open_archive(cfg)
+    if not episodes_mod.available(conn):
+        print("no episodes in this archive yet (the hub writes them with `sessionhub enrich`).")
+        return 1
+    res = episodes_mod.stream(conn, " ".join(args.name), before=_iso_arg(args.before), limit=args.limit)
+    if not res["episodes"]:
+        print(f"no line of work named like '{' '.join(args.name)}'.")
+        return 0
+    print(style.bold(res["names"][0]) + style.dim(f"  ({res['episodes']} episodes)"))
+    if len(res["names"]) > 1:
+        print(style.dim("also named ") + ", ".join(res["names"][1:6]))
+    print()
+    for it in res["timeline"]:
+        print(f"  {style.sid(_short_id(it['session_id']))}  " + style.dim(f"{_fmt_time(it['started_at']):<12}")
+              + _truncate(it["title"] or "", 70))
+    lt = res["latest"]
+    print()
+    print(style.dim("latest  ") + f"{_fmt_time(lt['started_at'])}  {lt['outcome'] or ''}")
+    if lt["open"]:
+        print(style.dim("open    ") + "; ".join(str(x) for x in lt["open"][:4]))
+    if lt["decided"]:
+        print(style.dim("decided ") + "; ".join(str(x) for x in lt["decided"][:4] if x))
+    return 0
 
 
 def cmd_hook(args: argparse.Namespace) -> int:
@@ -1093,7 +1157,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("query", nargs="+")
     s.add_argument("--tag", action="store_true")
     s.add_argument("--file", action="store_true")
-    s.add_argument("-n", "--limit", type=int, default=30, help="most results to show (default 30)")
+    s.add_argument("-n", "--limit", type=int, default=15, help="most results to show (default 15; best first)")
     s.add_argument("--newest", action="store_true", help="order matches by time instead of relevance")
     s.add_argument("--all-words", action="store_true", help="only sessions containing every word")
     s.add_argument("--any", action="append", metavar="QUERY", help="another phrasing of the same need; results are merged (repeatable)")
@@ -1136,7 +1200,20 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("show", help="session details, with what happened in each episode")
     s.add_argument("id")
     s.add_argument("--before", metavar="TIME", help="only episodes that started before TIME")
+    s.add_argument("--full", action="store_true", help="episode fields in full (default: shortened)")
     s.set_defaults(func=cmd_show)
+
+    s = sub.add_parser("about", help="what is recorded about a name (repo, service, person...), over time")
+    s.add_argument("name", nargs="+")
+    s.add_argument("--before", metavar="TIME", help="as of TIME")
+    s.add_argument("-n", "--limit", type=int, default=20)
+    s.set_defaults(func=cmd_about)
+
+    s = sub.add_parser("stream", help="a line of work over time and where it stood last")
+    s.add_argument("name", nargs="+")
+    s.add_argument("--before", metavar="TIME", help="as of TIME")
+    s.add_argument("-n", "--limit", type=int, default=30)
+    s.set_defaults(func=cmd_stream)
 
     s = sub.add_parser("raw", help="show a session's conversation (digest)")
     s.add_argument("id")

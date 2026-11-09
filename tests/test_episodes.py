@@ -122,3 +122,40 @@ def test_import_and_search_shows_the_matching_episode(archive, tmp_path, capsys)
     cli.main(["search", "pgbouncer"])
     out = capsys.readouterr().out
     assert "bbbbbbbb" in out and "episode: pgbouncer pool exhaustion fix" in out
+
+
+def test_a_bare_episode_list_is_accepted(archive, tmp_path):
+    cfg, conn = archive
+    script = tmp_path / "list_llm.py"
+    script.write_text('import json; print(json.dumps([{"turns": [1, 3], "title": "all of it"}]))')
+    cfg.llm.command = f"{sys.executable} {script}"
+    add_session(conn, "cdcdcdcd-1", body=BODY, started="2026-11-01T10:00:00Z")
+    episodes.ensure(conn)
+    assert episodes.enrich_one(conn, cfg, "cdcdcdcd-1", BODY, None) == 1
+
+
+def test_default_command_runs_claude_at_low_effort():
+    from sessionhub import llm
+    from sessionhub.config import LLMConfig
+
+    class C:
+        llm = LLMConfig()
+
+    argv, custom = llm.command(C, "p")
+    assert not custom and argv[:4] == ["claude", "-p", "--model", "haiku"]
+    assert argv[argv.index("--effort") + 1] == "low"
+    C.llm = LLMConfig(effort="")
+    assert "--effort" not in llm.command(C, "p")[0]
+
+
+def test_scheduled_run_enriches_when_configured(archive, tmp_path, capsys):
+    cfg, conn = archive
+    fake_llm(tmp_path, cfg)
+    cfg.llm.enrich_per_run = 5
+    config_mod.dump(cfg)
+    assert config_mod.load().llm.enrich_per_run == 5
+    add_session(conn, "efefefef-1", body=BODY, started="2026-11-01T10:00:00Z")
+    conn.execute("UPDATE sessions SET ended_at='2026-11-01T11:45:00Z'")
+    conn.commit()
+    cli.main(["run"])
+    assert "enrich: 1 sessions" in capsys.readouterr().out

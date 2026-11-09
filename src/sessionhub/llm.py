@@ -20,9 +20,14 @@ def command(cfg, prompt: str) -> tuple[list[str], bool]:
     if llm and llm.command:
         return shlex.split(llm.command), True
     model = llm.model if llm else "haiku"
-    return ["claude", "-p", "--model", model, "--output-format", "text", "--no-session-persistence",
-            "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands",
-            "--system-prompt", prompt], False
+    argv = ["claude", "-p", "--model", model, "--output-format", "text", "--no-session-persistence",
+            "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands"]
+    effort = llm.effort if llm else "low"
+    if effort:
+        # Measured on episode writing: haiku spent ~12k thinking tokens per chunk at its
+        # default effort and ~7.7k at low, with the same amount of written output.
+        argv += ["--effort", effort]
+    return argv + ["--system-prompt", prompt], False
 
 
 def call(cfg, prompt: str, text: str, timeout: int | None = None) -> str:
@@ -36,15 +41,15 @@ def call(cfg, prompt: str, text: str, timeout: int | None = None) -> str:
     return p.stdout
 
 
-def parse_json(out: str) -> dict:
+def parse_json(out: str) -> dict | list:
     s = re.sub(r"^```(?:json)?\s*|\s*```$", "", out.strip())
-    start = s.find("{")
-    if start > 0:
-        s = s[start:]
-    end = s.rfind("}")
-    if end >= 0:
-        s = s[: end + 1]
-    return json.loads(s)
+    starts = [i for i in (s.find("{"), s.find("[")) if i >= 0]
+    if not starts:
+        return json.loads(s)
+    start = min(starts)
+    close = "}" if s[start] == "{" else "]"
+    end = s.rfind(close)
+    return json.loads(s[start : end + 1] if end > start else s[start:])
 
 
 def model_label(cfg) -> str:

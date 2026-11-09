@@ -25,11 +25,13 @@ sessionhub search --tag NAME        by tag
 sessionhub search --file PATH       sessions that touched a file path
 sessionhub search X --any "Y Z"     merge another phrasing of the same need
 sessionhub search X --since 2026-10-01 --before 2026-11-01
-sessionhub search "그거 다시" --expand  a small model adds search queries (costs one call)
+sessionhub search "그거 다시" --expand  a small model adds search queries (one model call)
 sessionhub recent -d 3              last 3 days
 sessionhub list -p myproject -n 20  filter by project
 sessionhub list -m workstation      filter by machine
 sessionhub show <id-prefix>         session detail, with a card per episode (asked/did/result/decided/files)
+sessionhub about NAME                what is recorded about a repo/service/person, newest first
+sessionhub stream NAME               a line of work over time, and where it stood last
 sessionhub raw <id-prefix>          the conversation (trimmed digest)
 sessionhub raw --full <id-prefix>   the untrimmed log, in place (may ssh)
 sessionhub stats                    totals by source / machine / project
@@ -47,6 +49,12 @@ sessions with every word). Under each result is the line of the conversation
 that matched best (`↳ …`). Use the names, paths and error text you saw in this
 conversation as search words — they find more than a paraphrase of the request.
 `--json` prints machine-readable results.
+
+`--expand` helps when all you have is the person's vague wording ("do that thing
+again"): from the bare request it found the right session in the top five 41%
+of the time against 23% without. When you already have exact names, paths or
+error text, search with those and leave `--expand` off — mixing in guessed
+queries pushed precise matches down.
 
 ### Filters for `recent` / `list`
 
@@ -75,7 +83,12 @@ Prefer `show` over `raw`. When the hub has run `enrich`, `show` lists each
 episode of the session (one topic each) with its time, what was asked, what was
 done, how it ended, what was decided and which files changed — usually enough
 to act on without reading the conversation. Search results then also show the
-best-matching episode under each session (`↳ episode: …`). `raw` prints the trimmed conversation (a digest);
+best-matching episode under each session (`↳ episode: …`).
+
+`about NAME` and `stream NAME` are built from the same episodes when you ask,
+so every line keeps its session and date; `--before TIME` reads them as of an
+earlier moment. Use `about` when a short name in the request ("bf", "the
+relay") needs resolving, `stream` to see where a line of work last stood. `raw` prints the trimmed conversation (a digest);
 read it only when the specific wording of an exchange matters. `raw --full`
 opens the complete original log, fetching it from the origin machine over ssh
 if that is where it lives.
@@ -88,7 +101,8 @@ request of a session, or one with a recall cue ("last time", "that one",
 "저번에", "그거"), it searches past episodes and adds up to four dated cards in
 front of the request. The cards are leads, not facts: they say what was true
 on their date. `[recall]` in config sets `mode = cue | always | off`; the hook
-logs each decision to `recall-hook.log` and never blocks a request.
+logs each decision to `recall-hook.log` and never fails a request. It takes
+about 2 s; `expand = true` adds model-written queries (finds more, ~15 s).
 
 ## Remote hubs
 

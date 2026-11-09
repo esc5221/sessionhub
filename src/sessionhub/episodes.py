@@ -22,6 +22,7 @@ re-rendering digests (e.g. `ingest --full`) does not trigger a re-run.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -60,6 +61,14 @@ CREATE TABLE IF NOT EXISTS episodes (
   UNIQUE(session_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id);
+CREATE TABLE IF NOT EXISTS episode_entities (
+  episode_id INTEGER NOT NULL REFERENCES episodes(id),
+  key TEXT NOT NULL,
+  name TEXT,
+  type TEXT,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_episode_entities_key ON episode_entities(key);
 CREATE TABLE IF NOT EXISTS enrich_state (
   session_id TEXT PRIMARY KEY,
   status TEXT NOT NULL,
@@ -111,8 +120,23 @@ class Timeline:
     ended: dict[int, str]
 
 
+def key(name: str | None) -> str:
+    """Spelling-insensitive key for a name: case, spaces and -_./() ignored."""
+    return re.sub(r"[\s\-_./()]+", "", (name or "").lower())
+
+
 def ensure(conn: sqlite3.Connection) -> bool:
     conn.executescript(DDL)
+    if not conn.execute("PRAGMA table_info(episodes)").fetchall() or not _column(conn, "episodes", "ws_key"):
+        conn.execute("ALTER TABLE episodes ADD COLUMN ws_key TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_episodes_ws ON episodes(ws_key)")
+        for eid, ws in conn.execute("SELECT id, workstream FROM episodes").fetchall():
+            conn.execute("UPDATE episodes SET ws_key=? WHERE id=?", (key(ws), eid))
+    if conn.execute("SELECT 1 FROM episodes LIMIT 1").fetchone() and not conn.execute(
+        "SELECT 1 FROM episode_entities LIMIT 1"
+    ).fetchone():
+        for eid, ents in conn.execute("SELECT id, entities FROM episodes").fetchall():
+            _index_entities(conn, eid, loads(ents))
     try:
         conn.execute(FTS_DDL)
     except sqlite3.OperationalError:
@@ -120,6 +144,17 @@ def ensure(conn: sqlite3.Connection) -> bool:
         return False
     conn.commit()
     return True
+
+
+def _column(conn, table: str, col: str) -> bool:
+    return any(r[1] == col for r in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _index_entities(conn, eid: int, ents: list) -> None:
+    for x in ents:
+        if isinstance(x, dict) and key(x.get("name")):
+            conn.execute("INSERT INTO episode_entities (episode_id, key, name, type, note) VALUES (?,?,?,?,?)",
+                         (eid, key(x["name"]), x.get("name"), x.get("type"), x.get("note")))
 
 
 def available(conn: sqlite3.Connection) -> bool:
@@ -192,6 +227,7 @@ def store(conn: sqlite3.Connection, session_id: str, episodes: list[dict], tl: T
     """Replace a session's episodes. Times come from the timeline, not the model."""
     old = [r[0] for r in conn.execute("SELECT id FROM episodes WHERE session_id=?", (session_id,))]
     for eid in old:
+        conn.execute("DELETE FROM episode_entities WHERE episode_id=?", (eid,))
         try:
             conn.execute("DELETE FROM episodes_fts WHERE rowid=?", (eid,))
         except sqlite3.OperationalError:
@@ -208,13 +244,15 @@ def store(conn: sqlite3.Connection, session_id: str, episodes: list[dict], tl: T
             ended = tl.ended.get(last) or tl.ended.get(tt or tf) or session_end
         cur = conn.execute(
             """INSERT INTO episodes (session_id, seq, started_at, ended_at, turn_from, turn_to, title, ask,
-               outcome, did, decisions, artifacts, open_items, commands, errors, entities, workstream, queries, source)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               outcome, did, decisions, artifacts, open_items, commands, errors, entities, workstream, queries, source,
+               ws_key)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (session_id, seq, started, ended, tf, tt, e.get("title"), e.get("ask"), e.get("outcome"),
              _j(e.get("did")), _j(e.get("decisions")), _j(e.get("artifacts")), _j(e.get("open")),
              _j(e.get("commands")), _j(e.get("errors")), _j(e.get("entities")), e.get("workstream"),
-             _j(e.get("queries")), source),
+             _j(e.get("queries")), source, key(e.get("workstream"))),
         )
+        _index_entities(conn, cur.lastrowid, e.get("entities") or [])
         try:
             conn.execute("INSERT INTO episodes_fts (rowid, body) VALUES (?, ?)", (cur.lastrowid, _fts_body(e)))
         except sqlite3.OperationalError:
@@ -258,7 +296,8 @@ def enrich_one(conn: sqlite3.Connection, cfg, session_id: str, text: str, ended_
     episodes: list[dict] = []
     for ch in chunks:
         data = parse_json(call_llm(cfg, PROMPT, ch.text))
-        for e in data.get("episodes", []):
+        # Small models sometimes answer with the bare list instead of {"episodes": [...]}.
+        for e in data if isinstance(data, list) else data.get("episodes", []):
             if isinstance(e, dict):
                 episodes.append(e)
     count = store(conn, session_id, episodes, tl, f"llm:{llm_mod.model_label(cfg)}", session_end=ended_at)
@@ -326,7 +365,8 @@ def import_dir(conn: sqlite3.Connection, path: Path, *, log=print) -> dict:
             data = json.loads(f.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        by_sid.setdefault(sid, []).extend(e for e in data.get("episodes", []) if isinstance(e, dict))
+        eps = data if isinstance(data, list) else data.get("episodes", [])
+        by_sid.setdefault(sid, []).extend(e for e in eps if isinstance(e, dict))
     n_sess = n_ep = missing = 0
     for sid, eps in by_sid.items():
         row = conn.execute(
@@ -402,3 +442,57 @@ def loads(v) -> list:
         return x if isinstance(x, list) else []
     except (TypeError, json.JSONDecodeError):
         return []
+
+
+def about(conn: sqlite3.Connection, name: str, *, before: str | None = None, limit: int = 20) -> dict:
+    """Everything recorded about a name, computed now from the episodes (no stored summary).
+
+    Every line keeps its session and time, so the answer can be read as of any
+    moment (`before`) without a later fact leaking into an earlier view.
+    """
+    k = key(name)
+    rows = conn.execute(
+        """SELECT x.name, x.type, x.note, e.id, e.session_id, e.started_at, e.title, e.outcome
+           FROM episode_entities x JOIN episodes e ON e.id = x.episode_id
+           JOIN sessions s ON s.id = e.session_id
+           WHERE x.key = ? AND COALESCE(e.started_at, s.started_at) < ?
+           ORDER BY COALESCE(e.started_at, s.started_at) DESC""",
+        (k, before or "9999"),
+    ).fetchall()
+    spellings: dict[str, int] = {}
+    types: dict[str, int] = {}
+    for r in rows:
+        spellings[r[0]] = spellings.get(r[0], 0) + 1
+        if r[1]:
+            types[r[1]] = types.get(r[1], 0) + 1
+    seen: set[int] = set()
+    items = []
+    for r in rows:
+        if r[3] in seen:
+            continue
+        seen.add(r[3])
+        items.append({"session_id": r[4], "started_at": r[5], "episode": r[6], "note": r[2], "outcome": r[7]})
+    return {"key": k, "spellings": sorted(spellings, key=lambda x: -spellings[x]),
+            "types": sorted(types, key=lambda x: -types[x]), "mentions": len(rows),
+            "first": rows[-1][5] if rows else None, "last": rows[0][5] if rows else None,
+            "items": items[:limit]}
+
+
+def stream(conn: sqlite3.Connection, name: str, *, before: str | None = None, limit: int = 30) -> dict:
+    """A line of work over time: its episodes in order and where it stood last."""
+    k = key(name)
+    rows = conn.execute(
+        """SELECT e.workstream, e.session_id, e.started_at, e.title, e.outcome, e.open_items, e.decisions
+           FROM episodes e JOIN sessions s ON s.id = e.session_id
+           WHERE e.ws_key LIKE ? AND COALESCE(e.started_at, s.started_at) < ?
+           ORDER BY COALESCE(e.started_at, s.started_at)""",
+        ("%" + k + "%", before or "9999"),
+    ).fetchall()
+    names: dict[str, int] = {}
+    for r in rows:
+        names[r[0]] = names.get(r[0], 0) + 1
+    last = rows[-1] if rows else None
+    return {"names": sorted(names, key=lambda x: -names[x]), "episodes": len(rows),
+            "timeline": [{"session_id": r[1], "started_at": r[2], "title": r[3], "outcome": r[4]} for r in rows][-limit:],
+            "latest": {"started_at": last[2], "outcome": last[4], "open": loads(last[5]),
+                       "decided": [d.get("what") for d in loads(last[6]) if isinstance(d, dict)]} if last else None}
