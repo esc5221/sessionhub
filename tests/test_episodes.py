@@ -218,3 +218,62 @@ def test_many_one_shot_runs_do_not_hide_sessions_that_need_cards(archive, tmp_pa
     res = episodes.enrich(conn, cfg, limit=1, log=lambda m: None)
     assert res["enriched"] == 1
     assert conn.execute("SELECT status FROM enrich_state WHERE session_id='realreal-x'").fetchone()[0] == "done"
+
+
+# --- a session that grew after its cards were made gets cards for the new turns only ---
+
+MORE = TURNS + [("user", "text", "openside vault totp next"), ("assistant", "text", "added totp"),
+                ("user", "text", "ship it"), ("assistant", "text", "shipped")]
+MORE_TIMES = TIMES + ["2026-11-03T09:00:00Z", "2026-11-03T09:10:00Z",
+                      "2026-11-03T09:20:00Z", "2026-11-03T09:30:00Z"]
+
+
+def test_split_after_a_turn_sends_only_the_later_turns():
+    body = digest.render(MORE, "conversation", MORE_TIMES)
+    chunks, tl, n = episodes.split(body, start_after=3)
+    assert n == 5 and len(chunks) == 1
+    assert (chunks[0].turn_from, chunks[0].turn_to) == (4, 5)
+    assert "[U4 " in chunks[0].text and "[U3 " not in chunks[0].text and "relay pace" not in chunks[0].text
+    assert tl.said[1] == "2026-11-01T10:00:00Z"  # the timeline still covers every turn
+
+
+def test_imported_cards_that_stop_short_are_continued_not_redone(archive, tmp_path, capsys):
+    cfg, conn = archive
+    fake_llm(tmp_path, cfg)
+    body = digest.render(MORE, "conversation", MORE_TIMES)
+    add_session(conn, "cccccccc-9", body=body, started="2026-11-01T10:00:00Z")
+    conn.execute("UPDATE sessions SET ended_at='2026-11-03T09:30:00Z'")
+    conn.commit()
+    d = tmp_path / "old"
+    d.mkdir()
+    (d / "cccccccc-9.json").write_text(json.dumps({"episodes": [
+        {"turns": [1, 1], "title": "opus: relay pace cap"},
+        {"turns": [2, 3], "title": "opus: login redirect"}]}))
+    cli.main(["enrich", "--import", str(d)])
+    capsys.readouterr()
+    assert cli.main(["enrich"]) == 0
+    assert "after U3" in capsys.readouterr().out
+    titles = [r[0] for r in conn.execute("SELECT title FROM episodes WHERE session_id='cccccccc-9' ORDER BY seq")]
+    assert titles[:2] == ["opus: relay pace cap", "opus: login redirect"]  # kept
+    assert len(titles) == 4  # the fake model wrote two for U4-U5
+    row = conn.execute("SELECT started_at FROM episodes WHERE session_id='cccccccc-9' AND seq=2").fetchone()
+    assert row[0] == "2026-11-03T09:00:00Z"
+    capsys.readouterr()
+    cli.main(["enrich"])
+    assert "enriched 0" in capsys.readouterr().out
+
+
+def test_rebuild_redoes_the_whole_session(archive, tmp_path, capsys):
+    cfg, conn = archive
+    fake_llm(tmp_path, cfg)
+    body = digest.render(MORE, "conversation", MORE_TIMES)
+    add_session(conn, "cccccccc-8", body=body, started="2026-11-01T10:00:00Z")
+    conn.execute("UPDATE sessions SET ended_at='2026-11-03T09:30:00Z'")
+    conn.commit()
+    d = tmp_path / "old"
+    d.mkdir()
+    (d / "cccccccc-8.json").write_text(json.dumps({"episodes": [{"turns": [1, 3], "title": "opus: all"}]}))
+    cli.main(["enrich", "--import", str(d)])
+    cli.main(["enrich", "--rebuild", "--session", "cccccccc"])
+    titles = [r[0] for r in conn.execute("SELECT title FROM episodes WHERE session_id='cccccccc-8' ORDER BY seq")]
+    assert "opus: all" not in titles and titles == ["relay pace cap", "login redirect bug"]

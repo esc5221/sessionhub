@@ -166,15 +166,19 @@ def _iso(stamp: str | None) -> str | None:
     return stamp.replace(" ", "T") + ":00Z" if stamp else None
 
 
-def split(text: str, max_chars: int = CHUNK_CHARS) -> tuple[list[Chunk], Timeline, int]:
-    """Number the user turns of a digest and cut it into chunks at user turns."""
+def split(text: str, max_chars: int = CHUNK_CHARS, start_after: int = 0) -> tuple[list[Chunk], Timeline, int]:
+    """Number the user turns of a digest and cut it into chunks at user turns.
+
+    start_after skips the first turns (they already have episodes); the timeline
+    still covers every turn.
+    """
     chunks: list[Chunk] = []
     said: dict[int, str] = {}
     ended: dict[int, str] = {}
     buf: list[str] = []
     size = 0
     n = 0
-    first = 1
+    first = start_after + 1
     for who, when, body in digest_mod.parse_blocks(text):
         if who == "you":
             if buf and size >= max_chars:
@@ -184,16 +188,20 @@ def split(text: str, max_chars: int = CHUNK_CHARS) -> tuple[list[Chunk], Timelin
             if when:
                 said[n] = _iso(when)
                 ended[n] = _iso(when)
+            if n <= start_after:
+                continue
             line = f"[U{n}{' ' + when if when else ''}] {body[:USER_CUT]}"
         else:
             if n == 0:
                 continue
             if when:
                 ended[n] = _iso(when)
+            if n <= start_after:
+                continue
             line = "[A] " + body[:AGENT_CUT]
         buf.append(line)
         size += len(line)
-    if buf and n:
+    if buf and n > start_after:
         chunks.append(Chunk("\n".join(buf), first, n))
     return chunks, Timeline(said, ended), n
 
@@ -224,23 +232,44 @@ def _fts_body(e: dict) -> str:
 
 
 def store(conn: sqlite3.Connection, session_id: str, episodes: list[dict], tl: Timeline | None,
-          source: str, *, session_end: str | None = None) -> int:
-    """Replace a session's episodes. Times come from the timeline, not the model."""
-    old = [r[0] for r in conn.execute("SELECT id FROM episodes WHERE session_id=?", (session_id,))]
+          source: str, *, session_end: str | None = None, after: int = 0) -> int:
+    """Replace a session's episodes. Times come from the timeline, not the model.
+
+    With after=N, episodes that end at or before user turn N are kept and the new
+    ones are added behind them (the tail of a session that grew).
+    """
+    keep = 0
+    if after:
+        keep = conn.execute(
+            "SELECT COUNT(*) FROM episodes WHERE session_id=? AND COALESCE(turn_to, turn_from, 0) <= ?",
+            (session_id, after)).fetchone()[0]
+        old = [r[0] for r in conn.execute(
+            "SELECT id FROM episodes WHERE session_id=? AND COALESCE(turn_to, turn_from, 0) > ?",
+            (session_id, after))]
+    else:
+        old = [r[0] for r in conn.execute("SELECT id FROM episodes WHERE session_id=?", (session_id,))]
     for eid in old:
         conn.execute("DELETE FROM episode_entities WHERE episode_id=?", (eid,))
         try:
             conn.execute("DELETE FROM episodes_fts WHERE rowid=?", (eid,))
         except sqlite3.OperationalError:
             pass
-    conn.execute("DELETE FROM episodes WHERE session_id=?", (session_id,))
+    if old:
+        conn.execute(f"DELETE FROM episodes WHERE id IN ({','.join('?' * len(old))})", old)
+    if after and tl and keep:
+        # the last kept episode now ends where the new part starts
+        first_new = min((_turn(e, 0) or after + 1 for e in episodes), default=None)
+        if first_new:
+            conn.execute("UPDATE episodes SET ended_at=COALESCE(?, ended_at) WHERE session_id=? AND seq=?",
+                         (tl.ended.get(first_new - 1), session_id, keep - 1))
     episodes = sorted(episodes, key=lambda e: (_turn(e, 0) or 0))
-    for seq, e in enumerate(episodes):
+    for i, e in enumerate(episodes):
+        seq = keep + i
         tf, tt = _turn(e, 0), _turn(e, 1)
         started = ended = None
         if tl and tf:
             started = tl.said.get(tf)
-            nxt = _turn(episodes[seq + 1], 0) if seq + 1 < len(episodes) else None
+            nxt = _turn(episodes[i + 1], 0) if i + 1 < len(episodes) else None
             last = (nxt - 1) if nxt else max(tl.ended or {0: None})
             ended = tl.ended.get(last) or tl.ended.get(tt or tf) or session_end
         cur = conn.execute(
@@ -306,9 +335,12 @@ def candidates(conn: sqlite3.Connection, *, limit: int, idle_minutes: int = 30,
             yield {"id": sid, "ended_at": ended, "bytes": row[0], "status": status, "sig": sig, "attempts": attempts}
 
 
-def write_cards(cfg, text: str) -> tuple[list[dict], Timeline, int]:
-    """Ask the model for a session's episodes, chunk by chunk. No database access (thread-safe)."""
-    chunks, tl, n = split(text)
+def write_cards(cfg, text: str, start_after: int = 0) -> tuple[list[dict], Timeline, int]:
+    """Ask the model for a session's episodes, chunk by chunk. No database access (thread-safe).
+
+    start_after=N sends only the turns after N (earlier ones already have episodes).
+    """
+    chunks, tl, n = split(text, start_after=start_after)
     episodes: list[dict] = []
     for ch in chunks:
         data = parse_json(call_llm(cfg, PROMPT, ch.text))
@@ -317,6 +349,15 @@ def write_cards(cfg, text: str) -> tuple[list[dict], Timeline, int]:
             if isinstance(e, dict):
                 episodes.append(e)
     return episodes, tl, n
+
+
+def covered(conn: sqlite3.Connection, session_id: str) -> int:
+    """The last user turn the session's episodes reach (0 when it has none)."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='episodes'").fetchone():
+        return 0
+    r = conn.execute("SELECT MAX(COALESCE(turn_to, turn_from)) FROM episodes WHERE session_id=?",
+                     (session_id,)).fetchone()
+    return int(r[0] or 0)
 
 
 def enrich_one(conn: sqlite3.Connection, cfg, session_id: str, text: str, ended_at: str | None) -> int:
@@ -342,7 +383,7 @@ def _mark(conn, session_id: str, status: str, sig: str | None, error: str | None
 
 def enrich(conn: sqlite3.Connection, cfg, *, limit: int = 20, session_ids: list[str] | None = None,
            retry_failed: bool = False, dry_run: bool = False, max_age_days: float | None = None,
-           workers: int = 1, min_turns: int = 2, log=print) -> dict:
+           workers: int = 1, min_turns: int = 2, rebuild: bool = False, log=print) -> dict:
     """Write episodes for ended sessions that have none or have grown. Returns counts.
 
     max_age_days limits it to sessions that ended recently (the scheduled run uses
@@ -351,6 +392,8 @@ def enrich(conn: sqlite3.Connection, cfg, *, limit: int = 20, session_ids: list[
     at a time. Sessions are claimed ('running') first, so a scheduled run and a
     manual back-fill do not pay twice for the same session. Sessions with fewer
     than min_turns user messages (one-shot headless runs) are marked skipped.
+    A session that already has episodes for its first turns gets episodes for the
+    new turns only, added behind the old ones; rebuild=True redoes it whole.
     """
     ensure(conn)
     skipped = 0
@@ -371,25 +414,30 @@ def enrich(conn: sqlite3.Connection, cfg, *, limit: int = 20, session_ids: list[
                 _mark(conn, row["id"], "skipped", str(n), chars=len(text) if text else None)
             skipped += 1
             continue
-        jobs.append((row["id"], row["ended_at"], text, n))
+        after = 0 if rebuild else covered(conn, row["id"])
+        if after >= n:
+            after = 0
+        jobs.append((row["id"], row["ended_at"], text, n, after))
     if dry_run:
-        for sid, _, _, n in jobs:
-            log(f"would enrich {sid[:8]}  ({n} user turns)")
+        for sid, _, _, n, after in jobs:
+            log(f"would enrich {sid[:8]}  ({n} user turns" + (f", new after U{after})" if after else ")"))
         return {"enriched": len(jobs), "failed": 0, "unchanged": skipped}
     for sid, *_ in jobs:
         _mark(conn, sid, "running", None)
     conn.commit()
     done = failed = 0
     with ThreadPoolExecutor(max(1, workers)) as ex:
-        futures = {ex.submit(write_cards, cfg, text): (sid, ended, text) for sid, ended, text, _ in jobs}
+        futures = {ex.submit(write_cards, cfg, text, after): (sid, ended, text, after)
+                   for sid, ended, text, _, after in jobs}
         for fut in as_completed(futures):
-            sid, ended, text = futures[fut]
+            sid, ended, text, after = futures[fut]
             try:
                 episodes, tl, n = fut.result()
-                k = store(conn, sid, episodes, tl, f"llm:{llm_mod.model_label(cfg)}", session_end=ended)
+                k = store(conn, sid, episodes, tl, f"llm:{llm_mod.model_label(cfg)}", session_end=ended,
+                          after=after)
                 _mark(conn, sid, "done", str(n), chars=len(text))
                 conn.commit()
-                log(f"{sid[:8]}  {k} episodes")
+                log(f"{sid[:8]}  {k} episodes" + (f" after U{after}" if after else ""))
                 done += 1
             except Exception as e:  # one bad session must not stop the run
                 conn.rollback()
@@ -428,8 +476,13 @@ def import_dir(conn: sqlite3.Connection, path: Path, *, log=print) -> dict:
         text = digest_mod.decompress(row["bytes"]) if row["bytes"] else None
         tl = split(text)[1] if text else None
         n_ep += store(conn, row["id"], eps, tl, "import", session_end=row["ended_at"])
-        _mark(conn, row["id"], "done", str(user_turns(text)) if text else None,
-              chars=len(text) if text else None)
+        # Cards made elsewhere may stop short of the conversation as it is now (made
+        # from an older copy). Record what they cover, so the next enrich adds the rest.
+        n = user_turns(text) if text else 0
+        reach = max((_turn(e, 1) or _turn(e, 0) or 0 for e in eps), default=0)
+        behind = bool(text) and reach and reach < n - 1
+        _mark(conn, row["id"], "done", str(reach if behind else n) if text else None,
+              chars=(0 if behind else len(text)) if text else None)
         n_sess += 1
     conn.commit()
     return {"sessions": n_sess, "episodes": n_ep, "not_in_archive": missing}
