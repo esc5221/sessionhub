@@ -202,7 +202,7 @@ def test_zero_results_names_the_searched_fields(archive, capsys):
     assert "no results for 'zzznotpresent'" in out
     assert "title, summary, first message" in out
     assert "conversation text of 1 sessions" in out
-    assert "every word must appear" in out
+    assert "Try other words" in out
 
 
 def test_zero_results_admits_when_the_conversation_index_is_behind(archive, capsys):
@@ -225,7 +225,7 @@ def test_search_limit_is_reported_not_silent(archive, capsys):
     cli.main(["search", "needle", "-n", "2"])
     out = capsys.readouterr().out
     assert "(5 found)" in out
-    assert "showing the newest 2 of 5" in out
+    assert "showing the best 2 of 5" in out
 
 
 # --- -p: project, subsystem, or both ---

@@ -19,6 +19,7 @@ from sessionhub import digest as digest_mod
 from sessionhub import doctor as doctor_mod
 from sessionhub import ingest as ingest_mod
 from sessionhub import remote as remote_mod
+from sessionhub import search as search_mod
 from sessionhub import service as service_mod
 from sessionhub import skill as skill_mod
 from sessionhub import status as status_mod
@@ -76,6 +77,14 @@ def _note_empty_client_archive(cfg: Config) -> None:
 
 def _now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+def _iso_arg(value: str | None) -> str | None:
+    """Accept '2026-10-21', '2026-10-21 07:04' or a full ISO time; return ISO for comparison."""
+    if not value:
+        return None
+    v = value.strip().replace(" ", "T")
+    return v
 
 
 def _fmt_time(ts: str | None) -> str:
@@ -513,7 +522,7 @@ def _zero_result_help(conn, query: str) -> None:
             f"  conversation text is only indexed for {indexed:,} of {digests:,} sessions so far;"
             " the rest is added by the next `sessionhub run` on the hub."
         )
-    print("  every word must appear. Try fewer or plainer words; filter by project with `list -p NAME`.")
+    print("  Try other words (names, file paths, error text); filter by project with `list -p NAME`.")
 
 
 def cmd_search(args: argparse.Namespace) -> int:
@@ -540,27 +549,35 @@ def cmd_search(args: argparse.Namespace) -> int:
         ).fetchall()
         total = len(rows)
     else:
-        meta_ids: set[str] = set()
-        expr = _search_metadata_expr(query)
-        if expr:
-            meta_ids = {
-                r[0]
-                for r in conn.execute(
-                    "SELECT id FROM sessions_fts WHERE sessions_fts MATCH ?", (expr,)
-                )
-            }
-        body_ids = bodyindex.search_ids(conn, query)
-        ids = meta_ids | body_ids
-        body_only = len(body_ids - meta_ids)
+        hits = search_mod.search(
+            conn,
+            query,
+            extra_queries=args.any or [],
+            before=_iso_arg(args.before),
+            since=_iso_arg(args.since),
+            exclude=args.exclude or [],
+            all_words=args.all_words,
+            limit=2000,
+        )
+        by_id = {h.session_id: h for h in hits}
         rows = conn.execute(
-            """
-            SELECT * FROM sessions
-            WHERE id IN (SELECT value FROM json_each(?))
-            ORDER BY started_at DESC
-            """,
-            (json.dumps(sorted(ids)),),
+            "SELECT * FROM sessions WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(list(by_id)),),
         ).fetchall()
+        if args.newest:
+            rows.sort(key=lambda r: r["started_at"] or "", reverse=True)
+        else:
+            rows.sort(key=lambda r: (-by_id[r["id"]].score, r["started_at"] or ""))
         total = len(rows)
+        body_only = sum(1 for h in hits if h.sources == {"body"})
+        if args.json:
+            print(json.dumps([
+                {"id": r["id"], "started_at": r["started_at"], "title": _title(r),
+                 "project": r["project"], "score": round(by_id[r["id"]].score, 5),
+                 "matched": sorted(by_id[r["id"]].sources)}
+                for r in rows[:limit]
+            ], ensure_ascii=False))
+            return 0
     rows = rows[:limit]
     if not rows:
         if args.tag or args.file:
@@ -572,11 +589,16 @@ def cmd_search(args: argparse.Namespace) -> int:
     print()
     for r in rows:
         print(_row(r))
+        if not (args.tag or args.file) and not args.no_snippet:
+            snip = search_mod.snippet(conn, r["id"], query)
+            if snip:
+                print(style.dim(f"            ↳ {snip}"))
     notes = []
     if body_only:
         notes.append(f"{body_only} matched only in the conversation text")
     if total > len(rows):
-        notes.append(f"showing the newest {len(rows)} of {total}; raise it with -n")
+        order = "newest" if getattr(args, "newest", False) else "best"
+        notes.append(f"showing the {order} {len(rows)} of {total}; raise it with -n")
     if notes:
         print(style.dim("\n  " + "; ".join(notes)))
     return 0
@@ -972,6 +994,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tag", action="store_true")
     s.add_argument("--file", action="store_true")
     s.add_argument("-n", "--limit", type=int, default=30, help="most results to show (default 30)")
+    s.add_argument("--newest", action="store_true", help="order matches by time instead of relevance")
+    s.add_argument("--all-words", action="store_true", help="only sessions containing every word")
+    s.add_argument("--any", action="append", metavar="QUERY", help="another phrasing of the same need; results are merged (repeatable)")
+    s.add_argument("--since", metavar="TIME", help="only sessions that started at or after TIME (e.g. 2026-10-01)")
+    s.add_argument("--before", metavar="TIME", help="only sessions that started before TIME")
+    s.add_argument("--exclude", action="append", metavar="ID", help="leave out this session (id or prefix, repeatable)")
+    s.add_argument("--json", action="store_true", help="machine-readable output")
+    s.add_argument("--no-snippet", action="store_true", help="omit the matching line under each result")
     s.set_defaults(func=cmd_search)
 
     s = sub.add_parser("recent", help="recent sessions")
