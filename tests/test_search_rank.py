@@ -9,9 +9,14 @@ import json
 import re
 
 import pytest
+from tests import test_search_body as _base
 
 from sessionhub import cli, search
-from tests.test_search_body import add_session, archive, isolated, reindex  # noqa: F401
+
+add_session = _base.add_session
+reindex = _base.reindex
+archive = _base.archive
+isolated = _base.isolated
 
 
 def ids_in(out: str) -> list[str]:
