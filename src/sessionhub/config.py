@@ -69,6 +69,7 @@ class LLMConfig:
     command: str = ""
     timeout_s: int = 300
     effort: str = "low"   # passed as --effort to the default claude command ("" to omit)
+    enrich_per_run: int = 0   # >0: each scheduled `run` also enriches up to this many ended sessions
 
 
 @dataclass
@@ -178,6 +179,7 @@ def load(path: Path | None = None) -> Config:
         command=str(llm_raw.get("command", "")),
         timeout_s=int(llm_raw.get("timeout_s", 300)),
         effort=str(llm_raw.get("effort", "low")),
+        enrich_per_run=int(llm_raw.get("enrich_per_run", 0)),
     )
 
     rc_raw = raw.get("recall", {})
@@ -281,7 +283,8 @@ def dump(cfg: Config, path: Path | None = None) -> None:
     lines.append(f"mode = {_quote(cfg.digest_mode)}")
     lines.append("")
 
-    if cfg.llm.model != "haiku" or cfg.llm.command or cfg.llm.timeout_s != 300 or cfg.llm.effort != "low":
+    if (cfg.llm.model != "haiku" or cfg.llm.command or cfg.llm.timeout_s != 300 or cfg.llm.effort != "low"
+            or cfg.llm.enrich_per_run):
         lines.append("[llm]")
         lines.append(f"model = {_quote(cfg.llm.model)}")
         if cfg.llm.command:
@@ -290,6 +293,8 @@ def dump(cfg: Config, path: Path | None = None) -> None:
             lines.append(f"timeout_s = {cfg.llm.timeout_s}")
         if cfg.llm.effort != "low":
             lines.append(f"effort = {_quote(cfg.llm.effort)}")
+        if cfg.llm.enrich_per_run:
+            lines.append(f"enrich_per_run = {cfg.llm.enrich_per_run}")
         lines.append("")
 
     rc = cfg.recall

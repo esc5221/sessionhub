@@ -314,6 +314,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(f"[{_now_utc().isoformat()}] sessionhub run")
     r = ingest_mod.ingest_all(cfg, full=False)
     print(f"  done: new={r['new']} updated={r['updated']} errors={r['errors']}")
+    if cfg.llm.enrich_per_run > 0:
+        # Episode cards for sessions that ended since the last run (calls the model).
+        conn = connect(cfg.db_path)
+        init_schema(conn)
+        e = episodes_mod.enrich(conn, cfg, limit=cfg.llm.enrich_per_run, log=lambda m: print("  " + m))
+        print(f"  enrich: {e['enriched']} sessions, {e['failed']} failed")
     return 0
 
 

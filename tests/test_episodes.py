@@ -147,3 +147,16 @@ def test_default_command_runs_claude_at_low_effort():
     assert argv[argv.index("--effort") + 1] == "low"
     C.llm = LLMConfig(effort="")
     assert "--effort" not in llm.command(C, "p")[0]
+
+
+def test_scheduled_run_enriches_when_configured(archive, tmp_path, capsys):
+    cfg, conn = archive
+    fake_llm(tmp_path, cfg)
+    cfg.llm.enrich_per_run = 5
+    config_mod.dump(cfg)
+    assert config_mod.load().llm.enrich_per_run == 5
+    add_session(conn, "efefefef-1", body=BODY, started="2026-11-01T10:00:00Z")
+    conn.execute("UPDATE sessions SET ended_at='2026-11-01T11:45:00Z'")
+    conn.commit()
+    cli.main(["run"])
+    assert "enrich: 1 sessions" in capsys.readouterr().out
