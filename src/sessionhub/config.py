@@ -71,6 +71,7 @@ class LLMConfig:
     effort: str = "low"   # passed as --effort to the default claude command ("" to omit)
     enrich_per_run: int = 0   # >0: each scheduled `run` also enriches up to this many ended sessions
     enrich_max_age_days: float = 3   # ... but only sessions that ended within this many days (no back-fill)
+    enrich_workers: int = 4   # sessions whose model calls run at once
 
 
 @dataclass
@@ -184,6 +185,7 @@ def load(path: Path | None = None) -> Config:
         effort=str(llm_raw.get("effort", "low")),
         enrich_per_run=int(llm_raw.get("enrich_per_run", 0)),
         enrich_max_age_days=float(llm_raw.get("enrich_max_age_days", 3)),
+        enrich_workers=int(llm_raw.get("enrich_workers", 4)),
     )
 
     rc_raw = raw.get("recall", {})
@@ -288,7 +290,7 @@ def dump(cfg: Config, path: Path | None = None) -> None:
     lines.append("")
 
     if (cfg.llm.model != "haiku" or cfg.llm.command or cfg.llm.timeout_s != 300 or cfg.llm.effort != "low"
-            or cfg.llm.enrich_per_run or cfg.llm.enrich_max_age_days != 3):
+            or cfg.llm.enrich_per_run or cfg.llm.enrich_max_age_days != 3 or cfg.llm.enrich_workers != 4):
         lines.append("[llm]")
         lines.append(f"model = {_quote(cfg.llm.model)}")
         if cfg.llm.command:
@@ -299,6 +301,8 @@ def dump(cfg: Config, path: Path | None = None) -> None:
             lines.append(f"effort = {_quote(cfg.llm.effort)}")
         if cfg.llm.enrich_per_run:
             lines.append(f"enrich_per_run = {cfg.llm.enrich_per_run}")
+        if cfg.llm.enrich_workers != 4:
+            lines.append(f"enrich_workers = {cfg.llm.enrich_workers}")
         if cfg.llm.enrich_max_age_days != 3:
             lines.append(f"enrich_max_age_days = {cfg.llm.enrich_max_age_days:g}")
         lines.append("")

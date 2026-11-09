@@ -98,7 +98,8 @@ def test_unchanged_sessions_are_not_enriched_again(archive, tmp_path, capsys):
 def test_a_failing_session_is_recorded_and_the_run_goes_on(archive, tmp_path, capsys):
     cfg, conn = archive
     fake_llm(tmp_path, cfg)
-    bad = digest.render([("user", "text", "BOOM " * 100), ("assistant", "text", "x")], "conversation")
+    bad = digest.render([("user", "text", "BOOM " * 100), ("assistant", "text", "x"),
+                         ("user", "text", "again"), ("assistant", "text", "y")], "conversation")
     add_session(conn, "ffffffff-1", body=bad, started="2026-11-01T09:00:00Z")
     add_session(conn, "aaaaaaaa-2", body=BODY, started="2026-11-01T10:00:00Z")
     conn.execute("UPDATE sessions SET ended_at=started_at")
@@ -176,3 +177,30 @@ def test_scheduled_run_does_not_back_fill_old_sessions(archive, tmp_path, capsys
     assert "enrich: 0 sessions" in capsys.readouterr().out
     cli.main(["enrich"])  # an explicit run still reaches it
     assert conn.execute("SELECT COUNT(*) FROM episodes WHERE session_id='0ld0ld00-1'").fetchone()[0] == 2
+
+
+def test_parallel_enrich_and_one_turn_sessions_are_skipped(archive, tmp_path, capsys):
+    cfg, conn = archive
+    fake_llm(tmp_path, cfg)
+    for i in range(4):
+        add_session(conn, f"9{i}9{i}9{i}9{i}-p", body=BODY, started=f"2026-11-0{i + 1}T10:00:00Z")
+    one = digest.render([("user", "text", "x " * 300), ("assistant", "text", "y")], "conversation")
+    add_session(conn, "1t1t1t1t-p", body=one, started="2026-11-05T10:00:00Z")
+    conn.execute("UPDATE sessions SET ended_at=started_at")
+    conn.commit()
+    res = episodes.enrich(conn, cfg, limit=10, workers=3, log=lambda m: None)
+    assert res["enriched"] == 4 and res["failed"] == 0
+    st = dict(conn.execute("SELECT session_id, status FROM enrich_state").fetchall())
+    assert st["1t1t1t1t-p"] == "skipped" and all(st[f"9{i}9{i}9{i}9{i}-p"] == "done" for i in range(4))
+    again = episodes.enrich(conn, cfg, limit=10, workers=3, log=lambda m: None)
+    assert again["enriched"] == 0
+
+
+def test_a_claimed_session_is_not_picked_twice(archive):
+    cfg, conn = archive
+    add_session(conn, "c1c1c1c1-p", body=BODY, started="2026-11-01T10:00:00Z")
+    conn.execute("UPDATE sessions SET ended_at=started_at")
+    episodes.ensure(conn)
+    episodes._mark(conn, "c1c1c1c1-p", "running", None)
+    conn.commit()
+    assert [r["id"] for r in episodes.candidates(conn, limit=5)] == []
