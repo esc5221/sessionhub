@@ -80,6 +80,16 @@ read it only when the specific wording of an exchange matters. `raw --full`
 opens the complete original log, fetching it from the origin machine over ssh
 if that is where it lives.
 
+## Recall hook (optional)
+
+`sessionhub hook install` prints a Claude Code `UserPromptSubmit` hook (add
+`--write` to put it in `~/.claude/settings.json`, with a backup). On the first
+request of a session, or one with a recall cue ("last time", "that one",
+"저번에", "그거"), it searches past episodes and adds up to four dated cards in
+front of the request. The cards are leads, not facts: they say what was true
+on their date. `[recall]` in config sets `mode = cue | always | off`; the hook
+logs each decision to `recall-hook.log` and never blocks a request.
+
 ## Remote hubs
 
 The archive often lives on an always-on machine rather than the laptop. If

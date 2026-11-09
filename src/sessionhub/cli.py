@@ -19,6 +19,7 @@ from sessionhub import digest as digest_mod
 from sessionhub import doctor as doctor_mod
 from sessionhub import episodes as episodes_mod
 from sessionhub import expand as expand_mod
+from sessionhub import hook as hook_mod
 from sessionhub import ingest as ingest_mod
 from sessionhub import remote as remote_mod
 from sessionhub import search as search_mod
@@ -561,6 +562,7 @@ def cmd_search(args: argparse.Namespace) -> int:
             before=_iso_arg(args.before),
             since=_iso_arg(args.since),
             exclude=args.exclude or [],
+            interactive_only=args.interactive,
             all_words=args.all_words,
             limit=2000,
         )
@@ -576,6 +578,10 @@ def cmd_search(args: argparse.Namespace) -> int:
         total = len(rows)
         body_only = sum(1 for h in hits if h.sources == {"body"})
         if args.json:
+            if args.cards:
+                expr = search_mod.match_expr(" ".join([query, *extra]))
+                print(json.dumps([hook_mod.card(conn, r["id"], expr) for r in rows[:limit]], ensure_ascii=False))
+                return 0
             print(json.dumps([
                 {"id": r["id"], "started_at": r["started_at"], "title": _title(r),
                  "project": r["project"], "score": round(by_id[r["id"]].score, 5),
@@ -724,6 +730,23 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                               retry_failed=args.retry_failed, dry_run=args.dry_run)
     print(style.dim(f"enriched {res['enriched']}, failed {res['failed']}"))
     return 0 if not res["failed"] else 1
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    """Claude Code hooks. `recall` reads the hook payload on stdin; `install` wires it up."""
+    if args.action == "recall":
+        try:
+            cfg = config_mod.load()
+        except FileNotFoundError:
+            return 0  # never break the request
+        return hook_mod.main_recall(cfg)
+    from sessionhub.service import resolve_exe
+
+    path = Path(args.settings).expanduser() if args.settings else Path.home() / ".claude" / "settings.json"
+    print(hook_mod.install(path, resolve_exe(), args.write))
+    if not args.write:
+        print(style.dim(f"\nadd the above to {path}, or run: sessionhub hook install --write"))
+    return 0
 
 
 def cmd_raw(args: argparse.Namespace) -> int:
@@ -1079,6 +1102,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--exclude", action="append", metavar="ID", help="leave out this session (id or prefix, repeatable)")
     s.add_argument("--json", action="store_true", help="machine-readable output")
     s.add_argument("--no-snippet", action="store_true", help="omit the matching line under each result")
+    s.add_argument("--interactive", action="store_true", help="only interactive sessions (no subagent/exec)")
+    s.add_argument("--cards", action="store_true", help="with --json: each result's best-matching episode card")
     s.add_argument("--expand", action="store_true", help="let a small model add search queries (see [llm] in config)")
     s.add_argument("--ctx-file", metavar="PATH", help="end of the current conversation, to resolve 'that'/'last time' (- for stdin)")
     s.set_defaults(func=cmd_search)
@@ -1149,6 +1174,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--dry-run", action="store_true", help="list what would be enriched")
     s.add_argument("--import", dest="import_dir", metavar="DIR", help="load episodes written elsewhere (<session-id>[__NN].json files)")
     s.set_defaults(func=cmd_enrich)
+
+    s = sub.add_parser("hook", help="Claude Code hooks: recall (inject matching past episodes) / install")
+    s.add_argument("action", choices=["recall", "install"])
+    s.add_argument("--settings", help="settings.json to change (default ~/.claude/settings.json)")
+    s.add_argument("--write", action="store_true", help="with install: change the settings file (a backup is kept)")
+    s.set_defaults(func=cmd_hook)
 
     s = sub.add_parser("export", help="emit this machine's sessions as a digest stream")
     s.add_argument("--since", type=float, default=0.0, help="only sessions with mtime > this")

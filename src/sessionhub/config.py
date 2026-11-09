@@ -71,6 +71,20 @@ class LLMConfig:
 
 
 @dataclass
+class RecallConfig:
+    """The recall hook (`sessionhub hook recall`).
+
+    mode: cue (first request of a session, or a recall cue) | always | off
+    """
+
+    mode: str = "cue"
+    expand: bool = True
+    expand_timeout_s: int = 12
+    timeout_s: int = 25
+    max_cards: int = 4
+
+
+@dataclass
 class Config:
     db_path: Path
     raw_dir: Path
@@ -84,6 +98,7 @@ class Config:
     remote_query: RemoteQuery | None = None
     digest_mode: str = "conversation"   # conversation | full | none
     llm: LLMConfig = field(default_factory=LLMConfig)
+    recall: RecallConfig = field(default_factory=RecallConfig)
 
     @property
     def config_path(self) -> Path:
@@ -163,6 +178,15 @@ def load(path: Path | None = None) -> Config:
         timeout_s=int(llm_raw.get("timeout_s", 300)),
     )
 
+    rc_raw = raw.get("recall", {})
+    recall = RecallConfig(
+        mode=str(rc_raw.get("mode", "cue")),
+        expand=bool(rc_raw.get("expand", True)),
+        expand_timeout_s=int(rc_raw.get("expand_timeout_s", 12)),
+        timeout_s=int(rc_raw.get("timeout_s", 25)),
+        max_cards=int(rc_raw.get("max_cards", 4)),
+    )
+
     rq_raw = raw.get("remote_query", {})
     remote_query = None
     if rq_raw.get("host"):
@@ -181,6 +205,7 @@ def load(path: Path | None = None) -> Config:
         remote_query=remote_query,
         digest_mode=digest_mode,
         llm=llm,
+        recall=recall,
     )
 
 
@@ -261,6 +286,16 @@ def dump(cfg: Config, path: Path | None = None) -> None:
             lines.append(f"command = {_quote(cfg.llm.command)}")
         if cfg.llm.timeout_s != 300:
             lines.append(f"timeout_s = {cfg.llm.timeout_s}")
+        lines.append("")
+
+    rc = cfg.recall
+    if (rc.mode, rc.expand, rc.expand_timeout_s, rc.timeout_s, rc.max_cards) != ("cue", True, 12, 25, 4):
+        lines.append("[recall]")
+        lines.append(f"mode = {_quote(rc.mode)}")
+        lines.append(f"expand = {'true' if rc.expand else 'false'}")
+        lines.append(f"expand_timeout_s = {rc.expand_timeout_s}")
+        lines.append(f"timeout_s = {rc.timeout_s}")
+        lines.append(f"max_cards = {rc.max_cards}")
         lines.append("")
 
     if cfg.remote_query:
