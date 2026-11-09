@@ -732,6 +732,58 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     return 0 if not res["failed"] else 1
 
 
+def cmd_about(args: argparse.Namespace) -> int:
+    """What the archive knows about a name: spellings, when it appears, and in which episodes."""
+    cfg = _load_or_die()
+    conn = _open_archive(cfg)
+    if not episodes_mod.available(conn):
+        print("no episodes in this archive yet (the hub writes them with `sessionhub enrich`).")
+        return 1
+    res = episodes_mod.about(conn, " ".join(args.name), before=_iso_arg(args.before), limit=args.limit)
+    if not res["mentions"]:
+        print(f"nothing recorded about '{' '.join(args.name)}'. Try `sessionhub search`.")
+        return 0
+    print(style.bold(res["spellings"][0]) + style.dim(f"  ({', '.join(res['types'][:3])})" if res["types"] else ""))
+    if len(res["spellings"]) > 1:
+        print(style.dim("also written ") + ", ".join(res["spellings"][1:8]))
+    print(style.dim(f"{res['mentions']} mentions, {_fmt_time(res['first'])} to {_fmt_time(res['last'])}"))
+    print()
+    for it in res["items"]:
+        print(f"  {style.sid(_short_id(it['session_id']))}  " + style.dim(f"{_fmt_time(it['started_at']):<12}")
+              + f"{_truncate(it['episode'] or '', 70)}")
+        if it["note"]:
+            print(style.dim(f"            {_truncate(it['note'], 140)}"))
+    return 0
+
+
+def cmd_stream(args: argparse.Namespace) -> int:
+    """A line of work over time: its episodes in order and where it stood last."""
+    cfg = _load_or_die()
+    conn = _open_archive(cfg)
+    if not episodes_mod.available(conn):
+        print("no episodes in this archive yet (the hub writes them with `sessionhub enrich`).")
+        return 1
+    res = episodes_mod.stream(conn, " ".join(args.name), before=_iso_arg(args.before), limit=args.limit)
+    if not res["episodes"]:
+        print(f"no line of work named like '{' '.join(args.name)}'.")
+        return 0
+    print(style.bold(res["names"][0]) + style.dim(f"  ({res['episodes']} episodes)"))
+    if len(res["names"]) > 1:
+        print(style.dim("also named ") + ", ".join(res["names"][1:6]))
+    print()
+    for it in res["timeline"]:
+        print(f"  {style.sid(_short_id(it['session_id']))}  " + style.dim(f"{_fmt_time(it['started_at']):<12}")
+              + _truncate(it["title"] or "", 70))
+    lt = res["latest"]
+    print()
+    print(style.dim("latest  ") + f"{_fmt_time(lt['started_at'])}  {lt['outcome'] or ''}")
+    if lt["open"]:
+        print(style.dim("open    ") + "; ".join(str(x) for x in lt["open"][:4]))
+    if lt["decided"]:
+        print(style.dim("decided ") + "; ".join(str(x) for x in lt["decided"][:4] if x))
+    return 0
+
+
 def cmd_hook(args: argparse.Namespace) -> int:
     """Claude Code hooks. `recall` reads the hook payload on stdin; `install` wires it up."""
     if args.action == "recall":
@@ -1137,6 +1189,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("id")
     s.add_argument("--before", metavar="TIME", help="only episodes that started before TIME")
     s.set_defaults(func=cmd_show)
+
+    s = sub.add_parser("about", help="what is recorded about a name (repo, service, person...), over time")
+    s.add_argument("name", nargs="+")
+    s.add_argument("--before", metavar="TIME", help="as of TIME")
+    s.add_argument("-n", "--limit", type=int, default=20)
+    s.set_defaults(func=cmd_about)
+
+    s = sub.add_parser("stream", help="a line of work over time and where it stood last")
+    s.add_argument("name", nargs="+")
+    s.add_argument("--before", metavar="TIME", help="as of TIME")
+    s.add_argument("-n", "--limit", type=int, default=30)
+    s.set_defaults(func=cmd_stream)
 
     s = sub.add_parser("raw", help="show a session's conversation (digest)")
     s.add_argument("id")
