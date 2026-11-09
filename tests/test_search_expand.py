@@ -8,8 +8,7 @@ locally and only the extra queries travel.
 import re
 import sys
 
-from tests import test_search_body as _base
-
+import test_search_body as _base  # tests/ is on sys.path under pytest
 from sessionhub import cli
 from sessionhub import config as config_mod
 from sessionhub.config import RemoteQuery

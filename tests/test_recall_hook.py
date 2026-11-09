@@ -5,8 +5,7 @@ import io
 import json
 import re
 
-from tests import test_search_body as _base
-
+import test_search_body as _base  # tests/ is on sys.path under pytest
 from sessionhub import cli, digest, episodes, hook
 from sessionhub import config as config_mod
 
