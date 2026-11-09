@@ -101,6 +101,7 @@ class CodexAdapter:
         user_messages: list[str] = []
         files_changed: set[str] = set()
         turns: list[tuple[str, str, str]] = []
+        times: list[str | None] = []
         token_in = 0
         token_out = 0
         msg_count = 0
@@ -136,6 +137,7 @@ class CodexAdapter:
                     if isinstance(content, str) and content.strip():
                         user_messages.append(content.strip())
                         turns.append(("user", "text", content.strip()))
+                        times.append(ts)
                     elif isinstance(content, list):
                         for block in content:
                             if (
@@ -146,11 +148,13 @@ class CodexAdapter:
                                 if t:
                                     user_messages.append(t)
                                     turns.append(("user", "text", t))
+                                    times.append(ts)
                 elif role == "assistant":
                     msg_count += 1
                     content = payload.get("content", "")
                     if isinstance(content, str) and content.strip():
                         turns.append(("assistant", "text", content.strip()))
+                        times.append(ts)
                     elif isinstance(content, list):
                         for block in content:
                             if isinstance(block, dict) and block.get("type") in (
@@ -160,6 +164,7 @@ class CodexAdapter:
                                 t = block.get("text", "").strip()
                                 if t:
                                     turns.append(("assistant", "text", t))
+                                    times.append(ts)
             elif rec_type == "response_item":
                 payload = rec.get("payload", {})
                 # Real codex rollouts carry the conversation here, as
@@ -172,9 +177,11 @@ class CodexAdapter:
                         msg_count += 1
                         user_messages.append(text)
                         turns.append(("user", "text", text))
+                        times.append(ts)
                     elif role == "assistant" and text:
                         msg_count += 1
                         turns.append(("assistant", "text", text))
+                        times.append(ts)
                 elif payload.get("type") == "function_call":
                     args_str = payload.get("arguments", "{}")
                     try:
@@ -196,6 +203,7 @@ class CodexAdapter:
                             picked = fp
                     if picked:
                         turns.append(("assistant", "tool", f"{name} {picked}"[:200]))
+                        times.append(ts)
             elif rec_type == "turn_context":
                 payload = rec.get("payload", {})
                 usage = payload.get("usage", {})
@@ -264,5 +272,6 @@ class CodexAdapter:
             raw_path=str(path),
             raw_mtime=mtime,
             digest_turns=turns,
+            digest_times=times,
             origin_path=str(path),
         )

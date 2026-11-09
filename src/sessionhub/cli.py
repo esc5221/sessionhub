@@ -673,6 +673,8 @@ def cmd_raw(args: argparse.Namespace) -> int:
             "SELECT bytes FROM digests WHERE session_id=?", (row["id"],)
         ).fetchone()
         text = digest_mod.decompress(drow["bytes"]) if drow else None
+        if text and getattr(args, "before", None):
+            text = digest_mod.cut_before(text, _iso_arg(args.before))
         if text:
             _page(text)
             return 0
@@ -1036,6 +1038,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("raw", help="show a session's conversation (digest)")
     s.add_argument("id")
     s.add_argument("--full", action="store_true", help="open the untrimmed log in place")
+    s.add_argument("--before", metavar="TIME", help="only the turns said before TIME (digests with turn times)")
     s.set_defaults(func=cmd_raw)
 
     s = sub.add_parser("stats", help="overall stats")
